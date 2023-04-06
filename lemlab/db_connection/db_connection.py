@@ -4,6 +4,8 @@ __license__ = ""
 __maintainer__ = "sdlumpp"
 __email__ = "sebastian.lumpp@tum.de"
 
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 import pandas as pd
 import sqlalchemy as db
 import lemlab.db_connection.db_param as db_p
