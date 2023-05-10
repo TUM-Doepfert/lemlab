@@ -8,6 +8,9 @@ import json
 from ruamel.yaml import YAML
 from pprint import pprint
 import ast
+import numpy as np
+import string
+from random import choice
 
 INPUT_PATH = os.path.join('.', '04 - scenarios', 'example_small')
 OUTPUT_PATH = os.path.join('.', 'scenarios')
@@ -207,7 +210,7 @@ class h2l:
                                 'type': str,
                                 'func': None,
                             },
-                            'ma_premium_quality': {
+                            'ma_premium_preference_quality': {
                                 'src': 'premium_preference_quality',
                                 'type': int,
                                 'func': None,
@@ -235,6 +238,11 @@ class h2l:
                                 'src': 'plants',
                                 'type': None,
                                 'func': None,
+                            },
+                            'id_meter_grid': {
+                                'src': None,
+                                'type': str,
+                                'func': self._create_main_meter,
                             },
                         },
                     },
@@ -537,14 +545,85 @@ class h2l:
                     },
                     # 3. level: call function to convert each column into a separate meter file
                     'meters.ft': self._split_meter,
-                    'socs.ft': {
-
-                    },
-                    'timeseries.ft': {
-
-                    },
+                    'socs.ft': self._split_soc,
+                    'timeseries.ft': self._split_timeseries,
                 },
-            }
+            },
+            # Market is structured the following way (check that identical with config):
+            # 1. level: source files and parameters
+            # 2. level: parameter names in lemlab
+            'market': {
+                'sources': ['config/config_markets.yaml'],
+                'params': {
+                        'types_clearing_ex_ante': {0: 'pda'},
+                        'types_clearing_ex_post': {0: 'community'},
+                        'types_pricing_ex_ante': {0: 'uniform',
+                                                  1: 'discriminatory'},
+                        'types_pricing_ex_post': {0: 'standard'},
+                        'share_quality_logging_extended': True,
+                        'types_quality': {0: 'na',
+                                          1: 'local',
+                                          2: 'green_local'},
+                        'types_position': {0: 'offer',
+                                           1: 'bid'},
+                        'types_transaction': {0: 'market',
+                                              1: 'balancing',
+                                              2: 'levy_prices'},
+                        'positions_delete': True,
+                        'positions_archive': True,
+                        'horizon_clearing': 86400,
+                        'interval_clearing': 900,
+                        'frequency_clearing': 900,
+                        'calculate_virtual_submeters': True,
+                        'prices_settlement_in_advance': 0,
+                        'types_meter': {0: 'plant submeter',
+                                        1: 'virtual plant submeter',
+                                        2: 'dividing meter',
+                                        3: 'virtual dividing meter',
+                                        4: 'grid meter',
+                                        5: 'virtual grid meter'},
+                        'bal_energy_pricing_mechanism': [0, [self.market, 'pricing', 'retailer', 'balancing', 'method'],
+                                                         self.__get_value],
+                        'path_bal_prices': [0, [self.market, 'pricing', 'retailer', 'balancing', 'file', 'file'],
+                                            self.__get_value],
+                        'price_energy_balancing_positive': [0,
+                                                            [self.market, 'pricing', 'retailer', 'balancing', 'fixed',
+                                                             'price'], [0], self.__get_value_list],
+                        'price_energy_balancing_negative': [0,
+                                                            [self.market, 'pricing', 'retailer', 'balancing', 'fixed',
+                                                             'price'], [1], self.__get_value_list],
+                        'levy_pricing_mechanism': [0, [self.market, 'pricing', 'retailer', 'levies', 'method'],
+                                                   self.__get_value],
+                        'path_levy_prices': [0, [self.market, 'pricing', 'retailer', 'levies', 'file', 'file'],
+                                             self.__get_value],
+                        'price_energy_levies_positive': [0, [self.market, 'pricing', 'retailer', 'levies', 'fixed',
+                                                             'price'], [0], self.__get_value_list],
+                        'price_energy_levies_negative': [0, [self.market, 'pricing', 'retailer', 'levies', 'fixed',
+                                                             'price'], [1], self.__get_value_list],
+                    },
+            },
+            'retailer': {
+                'sources': ['config/config_markets.yaml', 'general/retailer.ft'],
+                'params': {
+                        'retail_pricing_mechanism': [0, [self.market, 'pricing', 'retailer', 'energy', 'method'],
+                                                     self.__get_value],
+                        'path_retail_prices': [0, [self.market, 'pricing', 'retailer', 'energy', 'file', 'file'],
+                                               self.__get_value],
+                        'price_sell': [0, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'price'], [1],
+                                       self.__get_value_list],
+                        'price_buy': [0, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'price'], [0],
+                                      self.__get_value_list],
+                        'qty_energy_bid': [0, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'quantity'], [1],
+                                           self.__get_value_list],
+                        'qty_energy_offer': [0, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'quantity'],
+                                             [0], self.__get_value_list],
+                        'quality': 'na',
+                        'id_user': 'retailer01',
+                    },
+            },
+            'weather': {
+                'sources': ['general/weather/weather.ft'],
+            },
         }
 
     def convert(self):
@@ -607,6 +686,71 @@ class h2l:
                 else:
                     raise NotImplementedError
 
+    def _convert_market(self, name: str = 'market'):
+
+        # Create prosumer folder
+        self._create_folder(path=os.path.join(self.output_path, 'lem'), delete=False)
+
+        # Get relevant info
+        info = self.naming[name]
+        sources = info['sources']
+        params = info['params']
+
+        # Load sources
+        files = []
+        for source in sources:
+            files.append(self._load_file(os.path.join(self.input_path, source)))
+
+        # Add info to config
+        config = {}
+        self.__loop_through_dict(params, '', self._config_action, params=params, files=files, config=config)
+
+        # Save config
+        self._save_file(os.path.join(self.output_path, 'lem', 'config_account.json'), config)
+
+    def _convert_retailer(self, name: str = 'retailer'):
+
+        # Create prosumer folder
+        self._create_folder(path=os.path.join(self.output_path, 'retailer'), delete=False)
+
+        # Get relevant info
+        info = self.naming[name]
+        sources = info['sources']
+        params = info['params']
+
+        # Load sources
+        files = []
+        for source in sources:
+            files.append(self._load_file(os.path.join(self.input_path, source)))
+
+        # Add info to config
+        config = {}
+        self.__loop_through_dict(params, '', self._config_action, params=params, files=files, config=config)
+
+        # Save config
+        self._save_file(os.path.join(self.output_path, 'retailer', 'config_account.json'), config)
+
+        # Add retail price file
+        df = files[1]
+        df = df[['energy_price_buy', 'energy_price_sell']]
+        df.columns = ['price_sell', 'price_buy']  # flip buy and sell as convention is different in lemlab
+        self._save_file(os.path.join(self.output_path, 'retailer', 'retail_prices.ft'), df)
+
+    def _convert_weather(self, name: str = 'weather'):
+
+        # Create prosumer folder
+        self._create_folder(path=os.path.join(self.output_path, 'weather'), delete=False)
+
+        # Get relevant info
+        info = self.naming[name]
+        source = info['sources'][0]
+
+        # Load source
+        df = self._load_file(os.path.join(self.input_path, source))
+
+        # Save config
+        self._save_file(os.path.join(self.output_path, 'weather', 'weather.ft'), df)
+
     def _convert_sfh(self, agent: str, idx: int, info: dict):
 
         # Create agent folder
@@ -625,9 +769,14 @@ class h2l:
                 'file': self._load_file(os.path.join(agent, 'plants.json'))
             },
             'meters.ft': {
-                'dest': 'id_meter.json',
                 'file': self._load_file(os.path.join(agent, 'meters.ft'))
-            }
+            },
+            'socs.ft': {
+                'file': self._load_file(os.path.join(agent, 'socs.ft'))
+            },
+            'timeseries.ft': {
+                'file': self._load_file(os.path.join(agent, 'timeseries.ft'))
+            },
         }
 
         # Loop through all files
@@ -649,7 +798,10 @@ class h2l:
                                 output[lemlab] = hamlet['type'](output[lemlab])
                         else:
                             if callable(hamlet['func']):
-                                output[lemlab] = hamlet['func'](output[lemlab], id=id)
+                                try:
+                                    output[lemlab] = hamlet['func'](output[lemlab], id=id)
+                                except KeyError:
+                                    output[lemlab] = hamlet['func'](id=id, path=os.path.join(self.output_path, 'prosumer', id))
                             else:
                                 output[lemlab] = hamlet['func']
                             if hamlet['type']:
@@ -692,40 +844,136 @@ class h2l:
                 self._save_file(os.path.join(self.output_path, 'prosumer', id, files[file]['dest']), output)
 
             elif file == 'meters.ft':
-                print('hi')
                 # Split meter file into separate meter files
                 category(file=files[file]['file'], dest=os.path.join(self.output_path, 'prosumer', id))
 
+            elif file == 'socs.ft':
+                # Split soc file into separate soc files
+                category(file=files[file]['file'], dest=os.path.join(self.output_path, 'prosumer', id))
+
+            elif file == 'timeseries.ft':
+                # Split soc file into separate timeseries files
+                category(file=files[file]['file'], dest=os.path.join(self.output_path, 'prosumer', id))
+
+            else:
+                raise NotImplementedError
+
     @staticmethod
     def _conv_idx(val, **kwargs):
+        """Converts an index to a string"""
+
         val = kwargs['id']
 
         return val
 
+    def _create_main_meter(self, **kwargs):
+        """Creates a main meter file and returns the meter id"""
+
+        path = kwargs['path']
+
+        # Create meter id
+        meter_id = self.__gen_rand_id(10)
+
+        # Create meter file
+        with open(f"{path}/meter_{meter_id}.json", "w+") as write_file:
+            json.dump([0, 0], write_file)
+
+        return meter_id
+
+
     @staticmethod
     def _divide_by_1000(val, **kwargs):
+        """Divides a value by 1000"""
 
         return val / 1000
 
     @staticmethod
-    def _conv_str_to_list(val, **kwargs):
+    def _conv_str_to_list(val, **kwargs) -> list:
+        """Converts a string to a list
+
+        Args:
+            val: string to convert
+            kwargs: not used
+
+        Returns:
+            list
+
+        """
 
         return ast.literal_eval(val)
 
     @staticmethod
     def _split_meter(file: pd.DataFrame, dest: str):
-        print(file)
+        """Splits the meter file into separate meter files
+
+        Args:
+            file: meter file
+            dest: destination folder
+
+        Returns:
+            None
+
+        """
+
         # Loop through all meters by column
         for meter in file.columns:
             readings = [file[meter].iloc[0], file[meter].iloc[1]]
-            print(readings)
 
             # Save meter readings as json file
             with open(os.path.join(dest, f'meter_{meter}.json'), 'w') as f:
-                json.dump(readings, f)
-        exit()
+                json.dump(readings, f, cls=NpEncoder)
 
+    @staticmethod
+    def _split_soc(file: pd.DataFrame, dest: str):
+        """Splits the soc file into separate soc files
 
+        Args:
+            file: soc file
+            dest: destination folder
+
+        Returns:
+            None
+
+        """
+
+        # Loop through all socs by column
+        for soc in file.columns:
+            readings = int(file[soc].iloc[0])
+
+            # Save soc readings as json file
+            with open(os.path.join(dest, f'soc_{soc}.json'), 'w') as f:
+                json.dump(readings, f, cls=NpEncoder)
+
+    @staticmethod
+    def _split_timeseries(file: pd.DataFrame, dest: str):
+        """Splits the timeseries file into separate timeseries files
+
+        Args:
+            file: timeseries file
+            dest: destination folder
+
+        Returns:
+            None
+
+        """
+
+        # Get unique IDs from the column names
+        unique_ids = set([col.split("_")[0] for col in file.columns])
+
+        # Loop through the unique IDs
+        for uid in unique_ids:
+            # Get columns that belong to the current ID
+            cols = [col for col in file.columns if col.startswith(uid)]
+
+            # Create a new dataframe with only those columns
+            new_df = file[cols]
+
+            # Rename columns to remove the ID prefix
+            new_df.columns = [col.split("_", 1)[1] for col in cols]
+
+            # Save the new dataframe to a file
+            new_df = new_df.reset_index()
+            new_df.to_feather(os.path.join(dest, f"raw_data_{uid}.ft"))
 
     def __loop_through_dict(self, nested_dict: dict, path: str, func: callable, *args, **kwargs) -> None:
         """loops through the dictionary and calls the function for each item
@@ -877,15 +1125,32 @@ class h2l:
                 shutil.rmtree(path)
                 os.makedirs(path)
         time.sleep(0.0001)
+    @staticmethod
+    def __gen_rand_id(length: int) -> str:
+        """generates a random combination of ascii characters and digits of specified length
 
-    def _convert_market(self):
-        pass
+        Args:
+            length: integer specifying the length of the string
 
-    def _convert_retailer(self):
-        pass
+        Returns:
+            string with length equal to input argument length
 
-    def _convert_weather(self):
-        pass
+        """
+
+        characters = string.ascii_lowercase + string.digits * 3
+
+        return ''.join(choice(characters) for _ in range(length))
+
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NpEncoder, self).default(obj)
 
 
 if __name__ == "__main__":
