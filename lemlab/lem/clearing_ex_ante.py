@@ -21,6 +21,283 @@ import random
 import string
 
 
+def market_clearing_par_pre(db_obj,
+                            config_lem):
+    """
+    Function clears all offers and bids from database and writes stores unmatched and matched bids back in database.
+    @param db_obj: database connection object
+    @param config_lem: configuration dictionary of local energy market
+    """
+
+    # If market horizon is not set, then set to lem_param
+    if config_lem['horizon_clearing'] is None:
+        config_lem['horizon_clearing'] = 900
+
+    # Check whether clearing types have been specified
+    if config_lem['types_clearing_ex_ante'] is None:
+        config_lem['types_clearing_ex_ante'] = {0: "pda"}
+
+    # Read offers and bids from db
+    bids, offers = db_obj.get_open_positions(clear_table=config_lem['positions_delete'],
+                                             archive=config_lem['positions_archive'])
+
+    # Convert qualities to int
+    bids = convert_qualities_to_int(db_obj, bids, config_lem['types_quality'])
+    offers = convert_qualities_to_int(db_obj, offers, config_lem['types_quality'])
+
+    return bids, offers
+
+
+def market_clearing_par(db_obj,
+                        config_lem,
+                        t_clear,
+                        bids,
+                        offers,
+                        config_retailer=None):
+    """
+    Function clears all offers and bids from database and writes stores unmatched and matched bids back in database.
+    @param db_obj: database connection object
+    @param config_lem: configuration dictionary of local energy market
+    @param config_retailer: configuration dictionary of retailer
+    """
+
+    # TODO: See if config_retailer is needed. It seems to never have been used
+
+    # Extract data for specific time of delivery
+    offers_ts_d = offers[offers[db_obj.db_param.TS_DELIVERY] == t_clear]
+    bids_ts_d = bids[bids[db_obj.db_param.TS_DELIVERY] == t_clear]
+    # t_d_last_update = get_update_time(bids_sorted, offers_sorted)
+
+    # Check whether offers or bids are empty or last update in offers/bids is newer than last clearing time
+    if offers_ts_d.empty or bids_ts_d.empty:  # or t_d_last_update < t_clearing_start
+        pass
+    # Offers and bids are not empty and last update in offers/bids is newer than last clearing time
+    else:
+        # Check whether this is the first clearing period and whether the flag retailer bids is true
+        if config_retailer is not None:
+            # Insert retailer bids and offers
+            bids_ts_d, offers_ts_d = _add_retailer_bids(db_obj,
+                                                        config_retailer,
+                                                        t_clear,
+                                                        bids_ts_d,
+                                                        offers_ts_d)
+
+        # Clearing mechanism: PDA
+        positions_cleared, offers_uncleared, bids_uncleared, offers_cleared, bids_cleared = \
+            clearing_pda(db_obj,
+                         config_lem,
+                         offers_ts_d,
+                         bids_ts_d)
+
+        # Check whether market has cleared a volume
+        if not positions_cleared.empty:
+            if config_lem['share_quality_logging_extended']:
+                positions_cleared = calc_market_position_shares(db_obj, config_lem,
+                                                                offers_ts_d, bids_ts_d, positions_cleared)
+
+        return positions_cleared
+
+
+def market_clearing_par_post(db_obj,
+                             config_lem,
+                             positions_cleared,
+                             t_clear_start):
+    """
+    Function clears all offers and bids from database and writes stores unmatched and matched bids back in database.
+    @param db_obj: database connection object
+    @param config_lem: configuration dictionary of local energy market
+    @param positions_cleared: list of dataframes with all cleared positions
+    @param t_clear_start: start time of clearing [unix time]
+    """
+
+    # Combine all clearings
+    results_clearing = pd.concat(positions_cleared, ignore_index=True)
+
+    if not results_clearing.empty:
+        # Perform a post-processing
+        results_clearing = _post_processing_results(db_obj=db_obj, results=results_clearing,
+                                                    t_clearing_start=t_clear_start)
+
+        # Find column with relevant prices to update user balances
+        name_column_price = \
+            [x for x in results_clearing.columns if config_lem['types_pricing_ex_ante'][0] in x][0]
+
+        # Log transactions
+        transactions_market = _log_transactions_market(db_obj=db_obj,
+                                                       config_lem=config_lem,
+                                                       results_market=results_clearing,
+                                                       name_column_price=name_column_price,
+                                                       types_quality=config_lem['types_quality'])
+
+        # Update user balances
+        _update_user_balances(db_obj=db_obj,
+                              df_transactions=transactions_market)
+
+        # Write results back to database
+        db_obj.log_results_market(results_market=results_clearing,
+                                  name_table=db_obj.db_param.NAME_TABLE_RESULTS_MARKET_EX_ANTE_
+                                             + config_lem['types_clearing_ex_ante'][0])
+
+    return results_clearing
+
+
+def market_clearing_backup(db_obj,
+                        config_lem,
+                        config_retailer=None,
+                        t_override=None,
+                        plotting=False,
+                        verbose=False):
+    """
+    Function clears all offers and bids from database and writes stores unmatched and matched bids back in database.
+    @param db_obj: database connection object
+    @param config_lem: configuration dictionary of local energy market
+    @param config_retailer: configuration dictionary of retailer
+    @param t_override: defines the current time, mostly used for simulation purpose [unix time]
+    @param plotting: boolean value to visualize clearing results
+    @param verbose: boolean value to print updates to console
+    """
+    # If t_now is not set, then current time
+    if t_override is None:
+        t_now = round(time.time())
+    else:
+        t_now = t_override
+
+    # If market horizon is not set, then set to lem_param
+    if config_lem['horizon_clearing'] is None:
+        config_lem['horizon_clearing'] = 900
+
+    # Check whether clearing types have been specified
+    if config_lem['types_clearing_ex_ante'] is None:
+        config_lem['types_clearing_ex_ante'] = {0: "pda"}
+
+    # Calculate number of market clearings
+    n_clearings = int(config_lem['horizon_clearing'] / config_lem['interval_clearing'])
+
+    # Read offers and bids from db
+    bids, offers = db_obj.get_open_positions(clear_table=config_lem['positions_delete'],
+                                             archive=config_lem['positions_archive'])
+
+    # Jump to end of function if offers or bids are empty
+    if offers.empty or bids.empty:
+        if verbose:
+            print('All offers and/or bids are empty. No clearing possible')
+        return
+
+    bids = convert_qualities_to_int(db_obj, bids, config_lem['types_quality'])
+    offers = convert_qualities_to_int(db_obj, offers, config_lem['types_quality'])
+    results_clearing_all = {}
+    time_clearing_execution = {}
+
+    # for-loop for all specified clearing types
+    for j in range(len(config_lem['types_clearing_ex_ante'])):
+        type_clearing = config_lem['types_clearing_ex_ante'][j]
+        # Set clearing time
+        t_clearing_start = round(time.time())
+        if verbose:
+            print('\n\n### MARKET CLEARING STARTED ###', pd.Timestamp(t_clearing_start, unit="s", tz="Europe/Berlin"))
+            print(f'Market type: {type_clearing}')
+            print('Market contains', str(len(offers)), 'valid offers and', str(len(bids)), 'valid bids.')
+        # Create empty results df
+        results_clearing = pd.DataFrame()
+        positions_cleared = pd.DataFrame()
+
+        # Set first clearing interval to next clearing interval period (ceil up to next clearing interval)
+        t_clearing_first = t_now - (t_now % config_lem['interval_clearing']) + config_lem['interval_clearing']
+
+        # Go through all specified number of clearings
+        if verbose:
+            iterations = tqdm(range(0, n_clearings))
+        else:
+            iterations = range(0, n_clearings)
+
+        for i in iterations:
+            # Continuous clearing time, incrementing by market period
+            t_clearing_current = t_clearing_first + config_lem['interval_clearing'] * i
+            # Extract data for specific time of delivery
+            offers_ts_d = offers[offers[db_obj.db_param.TS_DELIVERY] == t_clearing_current]
+            bids_ts_d = bids[bids[db_obj.db_param.TS_DELIVERY] == t_clearing_current]
+            # t_d_last_update = get_update_time(bids_sorted, offers_sorted)
+
+            # Check whether offers or bids are empty or last update in offers/bids is newer than last clearing time
+            if offers_ts_d.empty or bids_ts_d.empty:  # or t_d_last_update < t_clearing_start
+                if verbose:
+                    iterations.set_description(str(pd.Timestamp(t_clearing_current, unit="s", tz="Europe/Berlin")) +
+                                               ' No clearing - supply and/or bids are empty')
+            # Offers and bids are not empty and last update in offers/bids is newer than last clearing time
+            else:
+                if verbose:
+                    iterations.set_description(str(pd.Timestamp(t_clearing_current, unit="s", tz="Europe/Berlin")) +
+                                               ' Clearing                                  ')
+                # Check whether this is the first clearing period and whether the flag retailer bids is true
+                if config_retailer is not None:
+                    # Insert retailer bids and offers
+                    bids_ts_d, offers_ts_d = _add_retailer_bids(db_obj,
+                                                                config_retailer,
+                                                                t_clearing_current,
+                                                                bids_ts_d,
+                                                                offers_ts_d)
+
+                plotting_title = pd.Timestamp(t_clearing_current, unit="s", tz="Europe/Berlin")
+
+                # Clearing mechanism: PDA
+                if 'pda' == type_clearing:
+                    positions_cleared, offers_uncleared, bids_uncleared, offers_cleared, bids_cleared = \
+                        clearing_pda(db_obj,
+                                     config_lem,
+                                     offers_ts_d,
+                                     bids_ts_d,
+                                     plotting=plotting,
+                                     plotting_title=plotting_title)
+
+                # Check whether market has cleared a volume
+                if not positions_cleared.empty:
+                    if config_lem['share_quality_logging_extended']:
+                        positions_cleared = calc_market_position_shares(db_obj, config_lem,
+                                                                        offers_ts_d, bids_ts_d, positions_cleared)
+                    results_clearing = pd.concat([results_clearing, positions_cleared], ignore_index=True)
+
+        t_clearing_end = round(time.time())
+        if verbose:
+            iterations.set_description('Post-processing: ', pd.Timestamp(t_clearing_end, unit="s",
+                                                                         tz="Europe/Berlin"))
+        if results_clearing.empty and verbose:
+            iterations.set_description('Empty market results: nothing has been cleared.')
+        if not results_clearing.empty:
+            # Perform a post-processing
+            results_clearing = _post_processing_results(db_obj=db_obj, results=results_clearing,
+                                                        t_clearing_start=t_clearing_start)
+            # only update user balances if this is the first clearing type
+            if j == 0:
+                # Find column with relevant prices to update user balances
+                name_column_price = \
+                    [x for x in results_clearing.columns if config_lem['types_pricing_ex_ante'][0] in x][0]
+                # Update user balances
+                transactions_market = _log_transactions_market(db_obj=db_obj,
+                                                               config_lem=config_lem,
+                                                               results_market=results_clearing,
+                                                               name_column_price=name_column_price,
+                                                               types_quality=config_lem['types_quality'])
+                _update_user_balances(db_obj=db_obj,
+                                      df_transactions=transactions_market)
+            # Write results back to database
+            db_obj.log_results_market(results_market=results_clearing,
+                                      name_table=db_obj.db_param.NAME_TABLE_RESULTS_MARKET_EX_ANTE_ + type_clearing)
+
+        # save all results to dictionary
+        results_clearing_all[type_clearing] = results_clearing
+
+        # General Information
+        t_post_processing_end = round(time.time())
+        if verbose:
+            print('\nTiming')
+            print('Internal clearing time:', str(t_clearing_end - t_clearing_start))
+            print('Post-processing time:', str(t_post_processing_end - t_clearing_end))
+            print('Market clearing ended, total time:', str(t_post_processing_end - t_clearing_start), 'seconds')
+
+        time_clearing_execution[type_clearing] = t_clearing_end - t_clearing_start
+
+    return results_clearing_all, offers, bids, time_clearing_execution
+
 def market_clearing(db_obj,
                     config_lem,
                     config_retailer=None,
@@ -972,6 +1249,7 @@ def clearing_pda(db_obj,
     bids_cleared = pd.DataFrame()
     positions_cleared = pd.DataFrame()
     qty_energy_cleared = 0
+
     # Check whether bids or offers are empty
     if bids.empty or offers.empty or \
             bids[bids[db_obj.db_param.QTY_ENERGY] > 0].empty or \
@@ -1022,6 +1300,11 @@ def clearing_pda(db_obj,
         positions_cleared = positions_merged[
             positions_merged[db_obj.db_param.PRICE_ENERGY + db_obj.db_param.EXTENSION_OFFER] <=
             positions_merged[db_obj.db_param.PRICE_ENERGY + db_obj.db_param.EXTENSION_BID]].copy()
+
+        if not positions_cleared.empty:
+            print()
+            print(positions_cleared.iloc[:5].to_string())
+
         # Convert floats (occur due to merging with NaN rows) to ints
         for column in positions_cleared.columns:
             if positions_cleared[column].dtype == np.float64:
@@ -1122,6 +1405,12 @@ def clearing_pda(db_obj,
 
     except Exception:
         traceback.print_exc()
+
+    if not positions_cleared.empty:
+        print()
+        print(positions_cleared.iloc[:5].to_string())
+        print(bids_cleared.iloc[:5].to_string())
+        exit()
 
     return positions_cleared, offers_uncleared, bids_uncleared, offers_cleared, bids_cleared
 
