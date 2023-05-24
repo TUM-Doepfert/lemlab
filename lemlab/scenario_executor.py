@@ -838,11 +838,10 @@ class ScenarioExecutor:
         :return: None
         """
 
-        # TODO: Mach weiter hier. Die Ergebnisse muessten nun kommen. Jetzt sind sie noch zusammenzufuegen und zu posten.
-
+        # log transactions in database
         clearing_ex_ante.market_clearing_par_post(db_obj=self.db_conn_admin,
                                                   config_lem=self.config["lem"],
-                                                  t_override=self.t_now)
+                                                  positions_cleared=results)
 
         # generate list of ts_delivery that are ready to be settled (i.e. (his means meter readings have been processed)
         list_ts_delivery_ready = lem_settlement.get_list_ts_delivery_ready(db_obj=self.db_conn_admin)

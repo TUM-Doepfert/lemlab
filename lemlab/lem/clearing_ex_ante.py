@@ -100,8 +100,7 @@ def market_clearing_par(db_obj,
 
 def market_clearing_par_post(db_obj,
                              config_lem,
-                             positions_cleared,
-                             t_clear_start):
+                             positions_cleared):
     """
     Function clears all offers and bids from database and writes stores unmatched and matched bids back in database.
     @param db_obj: database connection object
@@ -111,12 +110,14 @@ def market_clearing_par_post(db_obj,
     """
 
     # Combine all clearings
-    results_clearing = pd.concat(positions_cleared, ignore_index=True)
+    try:
+        results_clearing = pd.concat(positions_cleared, ignore_index=True)
+    except ValueError:
+        results_clearing = pd.DataFrame()
 
     if not results_clearing.empty:
         # Perform a post-processing
-        results_clearing = _post_processing_results(db_obj=db_obj, results=results_clearing,
-                                                    t_clearing_start=t_clear_start)
+        results_clearing = _post_processing_results(db_obj=db_obj, results=results_clearing)
 
         # Find column with relevant prices to update user balances
         name_column_price = \
@@ -1301,10 +1302,6 @@ def clearing_pda(db_obj,
             positions_merged[db_obj.db_param.PRICE_ENERGY + db_obj.db_param.EXTENSION_OFFER] <=
             positions_merged[db_obj.db_param.PRICE_ENERGY + db_obj.db_param.EXTENSION_BID]].copy()
 
-        if not positions_cleared.empty:
-            print()
-            print(positions_cleared.iloc[:5].to_string())
-
         # Convert floats (occur due to merging with NaN rows) to ints
         for column in positions_cleared.columns:
             if positions_cleared[column].dtype == np.float64:
@@ -1405,12 +1402,6 @@ def clearing_pda(db_obj,
 
     except Exception:
         traceback.print_exc()
-
-    if not positions_cleared.empty:
-        print()
-        print(positions_cleared.iloc[:5].to_string())
-        print(bids_cleared.iloc[:5].to_string())
-        exit()
 
     return positions_cleared, offers_uncleared, bids_uncleared, offers_cleared, bids_cleared
 
@@ -1717,7 +1708,7 @@ def _add_retailer_bids(db_obj,
 
 def _post_processing_results(db_obj, results, t_clearing_start):
     # Add clearing time and drop matching id
-    results[db_obj.db_param.T_CLEARED] = t_clearing_start
+    results[db_obj.db_param.T_CLEARED] = t_clearing_start if t_clearing_start is not None else round(time.time())
     # Drop all unnecessary columns
     results = results.drop(columns={db_obj.db_param.QTY_ENERGY + db_obj.db_param.EXTENSION_OFFER,
                                     db_obj.db_param.QTY_ENERGY + db_obj.db_param.EXTENSION_BID,
