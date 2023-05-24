@@ -137,9 +137,9 @@ def calculate_virtual_submeters(db_obj, list_ts_delivery):
                     for meter in list(set_readings):
                         cum_temp = df_readings_meter_delta[(df_readings_meter_delta["id_meter"] == meter) &
                                                            (df_readings_meter_delta["ts_delivery"] == ts_delivery)]
-                        cum_energy += int(cum_temp["energy_out"]) - int(cum_temp["energy_in"])
+                        cum_energy += int(cum_temp["energy_out"].iloc[0]) - int(cum_temp["energy_in"].iloc[0])
 
-                    mm_energy = int(mm_reading["energy_out"]) - int(mm_reading["energy_in"])
+                    mm_energy = int(mm_reading["energy_out"].iloc[0]) - int(mm_reading["energy_in"].iloc[0])
                     vm_energy = mm_energy - cum_energy
                     # append result to list of VM readings to be logged
                     list_readings_meter_delta.append([ts_delivery,
@@ -266,8 +266,8 @@ def update_balance_balancing_costs(db_obj, t_now, lem_config, list_ts_delivery, 
     for ts_d in list_ts_delivery:
         # return relevant settlement prices
         settlement_prices = db_obj.get_prices_settlement(ts_delivery_first=ts_d)
-        pos_bal_ener_price = int(settlement_prices[db_obj.db_param.PRICE_ENERGY_BALANCING_POSITIVE])
-        neg_bal_ener_price = int(settlement_prices[db_obj.db_param.PRICE_ENERGY_BALANCING_NEGATIVE])
+        pos_bal_ener_price = int(settlement_prices[db_obj.db_param.PRICE_ENERGY_BALANCING_POSITIVE].iloc[0])
+        neg_bal_ener_price = int(settlement_prices[db_obj.db_param.PRICE_ENERGY_BALANCING_NEGATIVE].iloc[0])
         # return balancing energies
         balancing_energies = db_obj.get_energy_balancing(ts_delivery=ts_d)
 
@@ -410,8 +410,8 @@ def update_balance_levies(db_obj, t_now, lem_config, list_ts_delivery, id_retail
         # get meter readings and levy prices
         meter_readings_delta = db_obj.get_meter_readings_by_type(ts_delivery=ts_d, types_meters=[4, 5])
         settlement_prices = db_obj.get_prices_settlement(ts_delivery_first=ts_d)
-        levies_pos = int(settlement_prices[db_obj.db_param.PRICE_ENERGY_LEVIES_POSITIVE])
-        levies_neg = int(settlement_prices[db_obj.db_param.PRICE_ENERGY_LEVIES_NEGATIVE])
+        levies_pos = int(settlement_prices[db_obj.db_param.PRICE_ENERGY_LEVIES_POSITIVE].iloc[0])
+        levies_neg = int(settlement_prices[db_obj.db_param.PRICE_ENERGY_LEVIES_NEGATIVE].iloc[0])
         # for each main meter reading, construct transaction
         for _, entry in meter_readings_delta.iterrows():
             if entry.loc[db_obj.db_param.ENERGY_OUT] != 0 and levies_pos != 0:
