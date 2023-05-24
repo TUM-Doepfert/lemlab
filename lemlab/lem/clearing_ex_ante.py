@@ -1280,15 +1280,6 @@ def clearing_pda(db_obj,
         bids = bids.sample(frac=1).reset_index(drop=True)
         offers = offers.sample(frac=1).reset_index(drop=True)
     try:
-        # Sort values first by price and quality
-        # if len(offers) > 15 and len(bids) > 15 and (len(offers) + len(bids) > 40):
-        #     offers.to_csv('offers.csv')
-        #     bids.to_csv('bids.csv')
-        #     exit()
-        # else:
-        #     print(len(offers), len(bids))
-        print(bids, offers)
-        exit()
         offers_sorted = offers.sort_values(by=[db_obj.db_param.PRICE_ENERGY, db_obj.db_param.QUALITY_ENERGY],
                                            ascending=[True, False],
                                            ignore_index=True)
