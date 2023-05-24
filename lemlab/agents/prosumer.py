@@ -143,7 +143,7 @@ class Prosumer:
         rtc_model.p_wind = pyo.Var(self._get_list_plants(plant_type="wind"),
                                    domain=pyo.NonNegativeReals)
 
-        current_wind_speed = float(self.df_weather_history.loc[self.ts_delivery_prev, "wind_speed"])
+        current_wind_speed = float(self.df_weather_history.loc[self.ts_delivery_prev, "wind_speed"].iloc[0])
 
         # wind maximum power constraint
         def wind_rule(_model, _plant):
@@ -194,7 +194,7 @@ class Prosumer:
         res_hp_dict = {}
 
         for _plant in self._get_list_plants(plant_type="hp"):
-            temp_amb = float(self.df_weather_history.loc[self.ts_delivery_prev, "temp"]) - 273.15
+            temp_amb = float(self.df_weather_history.loc[self.ts_delivery_prev, "temp"].iloc[0]) - 273.15
             hp_param = pd.read_json(f"{self.path}/spec_{_plant}.json")
             heatpump = HeatPump(hp_param)
             t_in_secondary = self.plant_dict[_plant]["temperature"] - 5
