@@ -499,7 +499,7 @@ class ScenarioExecutor:
         self.db_conn_admin.register_user(pd.DataFrame().from_dict(dict_user))
 
     # simulation execution
-    def __execute(self):
+    def __execute(self, show_pbar: bool = True):
         path_weather = f"{self.path_results}/weather/weather.ft"
         # choose execution mode: "real-time" or normal simulation
         if self.config["simulation"]["rts"] is True:
@@ -582,7 +582,8 @@ class ScenarioExecutor:
             # configure progress bar
             str_len = 42
             simulation_length = int((ts_delivery_end - ts_delivery_start) / 900 + 1)
-            pbar = tqdm(range(simulation_length), total=simulation_length)
+            if show_pbar:
+                pbar = tqdm(range(simulation_length), total=simulation_length)
 
             # set up multiprocessing pool for prosumer functionality
             # pre-clearing activity is computationally intensive, as it contains utilities and optimization
@@ -602,11 +603,13 @@ class ScenarioExecutor:
                 while ts_delivery_current <= ts_delivery_end:
                     # at one minute past the quarter-hour:
                     self.t_now = ts_delivery_current + 60
+
                     # set new label on progress bar
-                    str_time = \
-                        f"Simulating timestep #{self.step_counter} at " \
-                        f"{pd.Timestamp(ts_delivery_current, unit='s', tz=self.config['simulation']['sim_start_tz'])}"
-                    pbar.set_description(f"{str_time}: {'Forecasting and posting by market agents'.ljust(str_len)}")
+                    if show_pbar:
+                        str_time = \
+                            f"Simulating timestep #{self.step_counter} at " \
+                            f"{pd.Timestamp(ts_delivery_current, unit='s', tz=self.config['simulation']['sim_start_tz'])}"
+                        pbar.set_description(f"{str_time}: {'Forecasting and posting by market agents'.ljust(str_len)}")
 
                     # perform pre-clearing activities for prosumers, aggregators, retailer
                     # pre-clearing includes real-time controllers, logging of meter values, utilities,
@@ -619,22 +622,25 @@ class ScenarioExecutor:
                     self.t_now = ts_delivery_current + 900 - 5 * 60
                     # at five minutes before the end of the quarter hour:
                     # 1: market clearing (if ex-ante market) and market settlement
-                    pbar.set_description(f"{str_time}: {'Market clearing and settlement'.ljust(str_len)}")
+                    if show_pbar:
+                        pbar.set_description(f"{str_time}: {'Market clearing and settlement'.ljust(str_len)}")
                     bids, offers = self.__step_lem_pre()  # previously in step_lem but moved here to allow for parallelization
                     results = pool.map(_par_step,
                                        self.__gen_par_step_lem_input(bids, offers))
                     self.__step_lem_post(results)  # previously in step_lem but moved here to allow for parallelization
                     # 2: prosumers check market results
-                    pbar.set_description(f"{str_time}: {'Checking of market results'.ljust(str_len)}")
-                    pbar.update()
+                    if show_pbar:
+                        pbar.set_description(f"{str_time}: {'Checking of market results'.ljust(str_len)}")
+                        pbar.update()
                     self.__step_prosumers_post()
                     # increment ts_delivery and step_counter
                     ts_delivery_current += 900
                     self.step_counter += 1
                     # end of main while loop
             # after main simulation completed
-            pbar.set_description("Computation finished and results saved")  # update progress bar
-            pbar.close()        # close progress bar
+            if show_pbar:
+                pbar.set_description("Computation finished and results saved")  # update progress bar
+                pbar.close()        # close progress bar
             pool.close()        # close parallel pool
         else:
             print("Error: parameter 'simulation' 'real-time' must be True or False")
@@ -1122,26 +1128,26 @@ def _par_step_init(func, config, path_weather):
     # each multiprocessing worker gets a copy of the weather file for the simulation,
     # as every worker needs to regularly access the same read-only file
 
-    df_weather = ft.read_dataframe(path_weather)
-    df_weather = df_weather.astype({'ts_delivery_current': 'int', 'ts_delivery_fcast': 'int'})
-    df_weather.set_index(["ts_delivery_current", "ts_delivery_fcast"], inplace=True)
+    # df_weather = ft.read_dataframe(path_weather)
+    # df_weather = df_weather.astype({'ts_delivery_current': 'int', 'ts_delivery_fcast': 'int'})
+    # df_weather.set_index(["ts_delivery_current", "ts_delivery_fcast"], inplace=True)
 
     t_first = pd.Timestamp(config["simulation"]["sim_start"],
                            tz=config["simulation"]["sim_start_tz"]).timestamp() - 60
     t_last = t_first + config["simulation"]["sim_length"] * 86400 + 86400
     t_first_history = t_first - 100 * 86400
 
-    # slice weather data into historical data for forecast algorithm training (100 days)
-    # as well as perfect forecasting
-    df_weather_history = df_weather.loc[(slice(t_first_history, t_last + 3 * 86400), slice(None))]
-    df_weather_history = \
-        df_weather_history[df_weather_history.index.get_level_values(level=0)
-                           == df_weather_history.index.get_level_values(level=1)]
-    # slice weather forecasts for required simulation period from full weather file
-    df_weather_fcast = df_weather.loc[(slice(t_first - 900, t_last + 1), slice(None))]
-
-    func.df_weather_history = df_weather_history
-    func.df_weather_fcast = df_weather_fcast
+    # # slice weather data into historical data for forecast algorithm training (100 days)
+    # # as well as perfect forecasting
+    # df_weather_history = df_weather.loc[(slice(t_first_history, t_last + 3 * 86400), slice(None))]
+    # df_weather_history = \
+    #     df_weather_history[df_weather_history.index.get_level_values(level=0)
+    #                        == df_weather_history.index.get_level_values(level=1)]
+    # # slice weather forecasts for required simulation period from full weather file
+    # df_weather_fcast = df_weather.loc[(slice(t_first - 900, t_last + 1), slice(None))]
+    #
+    # func.df_weather_history = df_weather_history
+    # func.df_weather_fcast = df_weather_fcast
 
 
 def _par_step(list_info):
@@ -1160,8 +1166,9 @@ def _par_step(list_info):
     if "path_prosumer" in list_info.keys():
         prosumer = Prosumer(path=list_info["path_prosumer"],
                             t_override=list_info["t_now"],
-                            df_weather_history=_par_step.df_weather_history,
-                            df_weather_fcast=_par_step.df_weather_fcast)
+                            # df_weather_history=_par_step.df_weather_history,
+                            # df_weather_fcast=_par_step.df_weather_fcast
+                            )
 
         prosumer.pre_clearing_activity(db_obj=_par_step.db_conn)
     else:

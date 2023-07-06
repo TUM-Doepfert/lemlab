@@ -21,12 +21,12 @@ FCAST_UPDATE_PERIOD = 900
 class h2l:
 
     def __init__(self, input_path: str = None, output_path: str = None, name: str = None,
-                 market: str = 'lem_continuous'):
+                 market: str = 'lem_continuous', weather: str = 'weather.csv'):
         self.input_path = input_path if input_path is not None else INPUT_PATH
         self.name = name if name is not None else self.input_path.rsplit("\\", 1)[-1]
         self.output_path = output_path if output_path is not None else os.path.join(OUTPUT_PATH, self.name)
         self.market = market
-        print(f"Converting hamlet scenario from '{self.input_path}' to lemlab scenario '{self.output_path}'")
+        # print(f"Converting hamlet scenario from '{self.input_path}' to lemlab scenario '{self.output_path}'")
 
         self.naming = {
             # Config is structured the following way:
@@ -46,7 +46,7 @@ class h2l:
                         'rts_start_steps': 6,
                         'sim_start': [0, ['simulation', 'sim', 'start'], self.__config_sim_start],
                         'sim_start_tz': 'europe/berlin',
-                        'sim_length': [0, ['simulation', 'sim', 'duration'], self.__get_value],
+                        'sim_length': 1,  # [0, ['simulation', 'sim', 'duration'], self.__get_value],
                         'path_input_data': '../input_data',
                         'path_scenarios': '../scenarios',
                     },
@@ -472,76 +472,71 @@ class h2l:
                                 },
                             },
                         },
-                        # 'hp': {
-                        #     'src': 'hp',
-                        #     'params': {
-                        #         'type': {
-                        #             'src': 'type',
-                        #             'type': str,
-                        #             'func': None,
-                        #         },
-                        #         'activated': {
-                        #             'src': None,
-                        #             'type': bool,
-                        #             'func': True,
-                        #         },
-                        #         'has_submeter': {
-                        #             'src': None,
-                        #             'type': bool,
-                        #             'func': True,
-                        #         },
-                        #         'power_th': {
-                        #             'src': 'power',
-                        #             'type': int,
-                        #             'func': None,
-                        #         },
-                        #         'hp_type': {
-                        #             'src': None,
-                        #             'type': str,
-                        #             'func': 'Outdoor Air/Water',
-                        #         },
-                        #         'temperature': {
-                        #             'src': None,
-                        #             'type': int,
-                        #             'func': 50,
-                        #         },
-                        #         'capacity': {
-                        #             'src': None,
-                        #             'type': int,
-                        #             'func': self._get_storage_value,
-                        #         },
-                        #         'efficiency': {
-                        #             'src': None,
-                        #             'type': float,
-                        #             'func': self._get_storage_value,
-                        #         },
-                        #         'fcast': {
-                        #             'src': ['fcast', 'method'],
-                        #             'type': str,
-                        #             'func': None,
-                        #         },
-                        #         'fcast_order': {
-                        #             'src': None,
-                        #             'type': None,
-                        #             'func': [],
-                        #         },
-                        #         'fcast_param': {
-                        #             'src': ['fcast', 'smoothed_timesteps'],
-                        #             'type': None,
-                        #             'func': None,
-                        #         },
-                        #         'fcast_retraining_period': {
-                        #             'src': None,
-                        #             'type': int,
-                        #             'func': FCAST_RETRAINING_PERIOD,
-                        #         },
-                        #         'fcast_update_period': {
-                        #             'src': None,
-                        #             'type': int,
-                        #             'func': FCAST_UPDATE_PERIOD,
-                        #         },
-                        #     },
-                        # },
+                        'hp': {
+                            'src': 'hp',
+                            'params': {
+                                'type': {
+                                    'src': 'type',
+                                    'type': str,
+                                    'func': None,
+                                },
+                                'activated': {
+                                    'src': None,
+                                    'type': bool,
+                                    'func': True,
+                                },
+                                'has_submeter': {
+                                    'src': None,
+                                    'type': bool,
+                                    'func': True,
+                                },
+                                'power': {
+                                    'src': 'power',
+                                    'type': int,
+                                    'func': None,
+                                },
+                                'hp_type': {
+                                    'src': None,
+                                    'type': str,
+                                    'func': 'Outdoor Air/Water',
+                                },
+                                'temperature': {
+                                    'src': None,
+                                    'type': int,
+                                    'func': 55,
+                                },
+                                'capacity': {
+                                    'src': None,
+                                    'type': int,
+                                    'func': self._get_storage_value,
+                                },
+                                'efficiency': {
+                                    'src': None,
+                                    'type': float,
+                                    'func': self._get_storage_value,
+                                },
+                                'fcast': {
+                                    'src': None,
+                                    'type': str,
+                                    'func': self._get_heat_fcast,
+                                },
+                                'fcast_order': {
+                                    'src': None,
+                                    'type': None,
+                                    'func': [],
+                                },
+                                'fcast_retraining_period': {
+                                    'src': None,
+                                    'type': int,
+                                    'func': FCAST_RETRAINING_PERIOD,
+                                },
+                                'fcast_update_period': {
+                                    'src': None,
+                                    'type': int,
+                                    'func': FCAST_UPDATE_PERIOD,
+                                },
+                            },
+                        },
                     },
                     # 3. level: call function to convert each column into a separate meter file
                     'meters.ft': self._split_meter,
@@ -622,7 +617,7 @@ class h2l:
                     },
             },
             'weather': {
-                'sources': ['general/weather/weather.ft'],
+                'sources': [f'general/weather/{weather}'],
             },
         }
 
@@ -813,32 +808,36 @@ class h2l:
             elif file == 'plants.json':
                 # Loop through categories
                 for key, val in category.items():
-                    # Get source plant from file
-                    plant = next((item for id, item in files[file]['file'].items() if item['type'] == val['src']), None)
-                    plant_id = next((id for id, item in files[file]['file'].items() if item['type'] == val['src']), None)
-                    if plant is None:
-                        continue
-                    output[plant_id] = {}
-                    for lemlab, hamlet in val['params'].items():
-                        if hamlet['src']:
-                            try:
-                                output[plant_id][lemlab] = plant[hamlet['src']]
-                            except TypeError:
-                                out_val = plant
-                                for _, idx_item in enumerate(hamlet['src']):
-                                    out_val = out_val[idx_item]
-                                output[plant_id][lemlab] = out_val
-                            if hamlet['func']:
-                                output[plant_id][lemlab] = hamlet['func'](output[plant_id][lemlab], id=id)
-                            if hamlet['type']:
-                                output[plant_id][lemlab] = hamlet['type'](output[plant_id][lemlab])
-                        else:
-                            if callable(hamlet['func']):
-                                output[plant_id][lemlab] = hamlet['func'](output[plant_id][lemlab], id=id)
+                    # Get source plants from file
+                    plants_dict = {id: item for id, item in files[file]['file'].items() if item['type'] == val['src']}
+                    for plant_id, plant in plants_dict.items():
+                        if plant is None:
+                            continue
+                        output[plant_id] = {}
+                        for lemlab, hamlet in val['params'].items():
+                            if hamlet['src']:
+                                try:
+                                    output[plant_id][lemlab] = plant[hamlet['src']]
+                                except TypeError:
+                                    out_val = plant
+                                    for _, idx_item in enumerate(hamlet['src']):
+                                        out_val = out_val[idx_item]
+                                    output[plant_id][lemlab] = out_val
+                                if hamlet['func']:
+                                    output[plant_id][lemlab] = hamlet['func'](output[plant_id][lemlab], id=id)
+                                if hamlet['type']:
+                                    output[plant_id][lemlab] = hamlet['type'](output[plant_id][lemlab])
                             else:
-                                output[plant_id][lemlab] = hamlet['func']
-                            if hamlet['type']:
-                                output[plant_id][lemlab] = hamlet['type'](output[plant_id][lemlab])
+                                if callable(hamlet['func']):
+                                    try:
+                                        output[plant_id][lemlab] = hamlet['func'](output[plant_id][lemlab], id=id)
+                                    except KeyError:
+                                        output[plant_id][lemlab] = hamlet['func'](None, id=id, param=lemlab,
+                                                                                  key=key, plants=files[file]['file'])
+                                else:
+                                    output[plant_id][lemlab] = hamlet['func']
+                                if hamlet['type']:
+                                    output[plant_id][lemlab] = hamlet['type'](output[plant_id][lemlab])
 
                 # Save output
                 self._save_file(os.path.join(self.output_path, 'prosumer', id, files[file]['dest']), output)
@@ -849,11 +848,13 @@ class h2l:
 
             elif file == 'socs.ft':
                 # Split soc file into separate soc files
-                category(file=files[file]['file'], dest=os.path.join(self.output_path, 'prosumer', id))
+                category(file=files[file]['file'], plants=files['plants.json']['file'],
+                         dest=os.path.join(self.output_path, 'prosumer', id))
 
             elif file == 'timeseries.ft':
                 # Split soc file into separate timeseries files
-                category(file=files[file]['file'], dest=os.path.join(self.output_path, 'prosumer', id))
+                category(file=files[file]['file'], dest=os.path.join(self.output_path, 'prosumer', id),
+                         plants=files['plants.json']['file'])
 
             else:
                 raise NotImplementedError
@@ -903,6 +904,31 @@ class h2l:
         return ast.literal_eval(val)
 
     @staticmethod
+    def _get_storage_value(val, **kwargs):
+        """Get the heat storage values"""
+        param = kwargs['param']
+
+        plants = kwargs['plants']
+        plants_dict = [item for id, item in plants.items() if item['type'] == 'heat_storage'][0]
+
+        val = plants_dict[param]
+
+        return val
+
+    @staticmethod
+    def _get_heat_fcast(val, **kwargs):
+        """Get the heat storage values"""
+        param = kwargs['param']
+
+        plants = kwargs['plants']
+        plants_dict = [item for id, item in plants.items() if item['type'] == 'heat'][0]
+
+        if param == 'fcast':
+            val = plants_dict['fcast']['method']
+
+        return val
+
+    @staticmethod
     def _split_meter(file: pd.DataFrame, dest: str):
         """Splits the meter file into separate meter files
 
@@ -924,7 +950,7 @@ class h2l:
                 json.dump(readings, f, cls=NpEncoder)
 
     @staticmethod
-    def _split_soc(file: pd.DataFrame, dest: str):
+    def _split_soc(file: pd.DataFrame, plants: dict, dest: str):
         """Splits the soc file into separate soc files
 
         Args:
@@ -938,14 +964,20 @@ class h2l:
 
         # Loop through all socs by column
         for soc in file.columns:
+            # Find out what plant type is associated with the soc id
+            plant_type = plants[soc]['type']
             readings = int(file[soc].iloc[0])
+
+            # If plant type is heat storage, change the id of the soc to that of the hp
+            if plant_type == 'heat_storage' and plants[soc]['capacity']>0:
+                soc = [soc_id for soc_id, item in plants.items() if item['type'] == 'hp'][0]
 
             # Save soc readings as json file
             with open(os.path.join(dest, f'soc_{soc}.json'), 'w') as f:
                 json.dump(readings, f, cls=NpEncoder)
 
     @staticmethod
-    def _split_timeseries(file: pd.DataFrame, dest: str):
+    def _split_timeseries(file: pd.DataFrame, dest: str, plants: dict):
         """Splits the timeseries file into separate timeseries files
 
         Args:
@@ -957,6 +989,8 @@ class h2l:
 
         """
 
+        invert_sign = False
+
         # Get unique IDs from the column names
         unique_ids = set([col.split("_")[0] for col in file.columns])
 
@@ -965,8 +999,33 @@ class h2l:
             # Get columns that belong to the current ID
             cols = [col for col in file.columns if col.startswith(uid)]
 
+            # Check if any of the strings in cols contains the substring "_cop"
+            contains_cop = [col for col in file.columns if col.endswith("_cop")]
+            if len(contains_cop) > 0:
+                # Append columns that contain the name "_heat"
+                cols.extend([col for col in file.columns if col.endswith("_heat")])
+
+                a = 1
+
+                contains_cop = []
+
+            # Loop through all columns that contain the substring "_power"
+            contains_power = [col for col in file.columns if col.endswith("_power")]
+            if len(contains_power) > 0:
+                # Check if id is associated with inflexible_load
+                if plants[uid]['type'] == 'inflexible_load':                    # Set flag to invert the sign of the power values
+                    invert_sign = True
+
+                contains_power = []
+
+            # Check if cols has duplicates and delete them
+            cols = list(set(cols))
+
             # Create a new dataframe with only those columns
             new_df = file[cols]
+
+            if invert_sign:
+                new_df = new_df * -1
 
             # Rename columns to remove the ID prefix
             new_df.columns = [col.split("_", 1)[1] for col in cols]
@@ -1044,6 +1103,8 @@ class h2l:
         # Get the value of the dictionary
         for key in keys:
             file = file[key]
+        print('Change back sim_start and sim_duration!')
+        file = file + pd.Timedelta(days=3)
 
         return str(file + pd.Timedelta(hours=1))
 

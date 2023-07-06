@@ -9,6 +9,9 @@ from bisect import bisect_left
 import pandas as pd
 import feather as ft
 import numpy as np
+import warnings
+
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 """ This module contains the functions required to settle the local energy market.
     Settlement means all of the market functionality that takes place after the physical delivery of electricity

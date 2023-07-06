@@ -105,7 +105,7 @@ class ScenarioAnalyzer:
 
         """
 
-        self.plot_virtual_feeder_flow()             # plots the virtual power flow of the LEM
+        # self.plot_virtual_feeder_flow()             # plots the virtual power flow of the LEM
         self.plot_mcp()                             # plots the market clearing prices and their weighted average
         self.plot_balance()                         # plots the balance of each household at the end
         self.plot_price_type()                      # plots price vs. type of energy over time
@@ -1077,8 +1077,11 @@ class ScenarioAnalyzer:
         devices = ("pv", "bat", "ev", "hp", "wind", "fixedgen")
 
         for device in devices:
-            df_temp[device] = df_meters[(df_meters[db_p.INFO_ADDITIONAL] == device)]. \
-                              set_index(db_p.ID_USER)[db_p.INFO_ADDITIONAL]
+            try:
+                df_temp[device] = df_meters[(df_meters[db_p.INFO_ADDITIONAL] == device)]. \
+                                  set_index(db_p.ID_USER)[db_p.INFO_ADDITIONAL]
+            except ValueError:
+                df_temp[device] = 1
 
         # Post-process data to create tuples of (x, x, x, x, x, x) x ∈ [0, 1] and return information
         df_temp = df_temp.fillna(0)
