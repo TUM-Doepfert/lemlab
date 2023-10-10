@@ -178,7 +178,7 @@ class ForecastManager:
                         self.fcast_table[f'soc_{plant}'] = 0
 
                     elif self.plant_dict[plant].get("type") == "ev":
-                        # retrieve electric vehicle forecasts for availability AND distance driven
+                        # retrieve electric vehicle forecasts for availability
                         df_temp = self.__update_single_forecast(id_plant=plant, column="availability", ev=True)
                         df_temp.rename(columns={'availability': f'availability_{plant}'}, inplace=True)
                         num = 1
@@ -189,7 +189,7 @@ class ForecastManager:
                             except pandas.errors.MergeError:
                                 num += 1
 
-
+                        # retrieve electric vehicle forecasts for demand_Wh
                         df_temp = self.__update_single_forecast(id_plant=plant, column="demand_Wh", ev=True)
                         df_temp.rename(columns={'demand_Wh': f'demand_Wh_{plant}'}, inplace=True)
                         while True:
@@ -218,10 +218,14 @@ class ForecastManager:
                         df_temp.rename(columns={'heat': f'heat_{plant}'}, inplace=True)
                         self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
 
+                        # retrieve heat load forecasts
+                        df_temp = self.__update_single_forecast(id_plant=plant, column="cop")
+                        df_temp.rename(columns={'cop': f'cop_{plant}'}, inplace=True)
+                        self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
+
                         # empty columns created for HP analogously to battery
                         self.fcast_table[f'power_{plant}'] = 0
                         self.fcast_table[f'soc_{plant}'] = 0
-                        self.fcast_table[f'cop_{plant}'] = 0
 
                     # if plant was updated, save this to the spec file
                     self.plant_dict[plant]["fcast_last_update"] = self.ts_delivery_current
@@ -305,8 +309,8 @@ class ForecastManager:
             fcast_order = self.plant_dict[id_plant].get("fcast_order")
 
             if fcast_horizon is None:
-                fcast_horizon = self.config_dict["mpc_horizon"] + \
-                                self.plant_dict[id_plant].get("fcast_update_period", 900) // 900
+                # probably commented out part not needed as it just adds more steps but mpc_horizon IS already fcast_horizon
+                fcast_horizon = self.config_dict["mpc_horizon"] # + self.plant_dict[id_plant].get("fcast_update_period", 900) // 900
 
         if fcast is None:
             fcast = self.plant_dict[id_plant].get("fcast")
@@ -421,19 +425,41 @@ class ForecastManager:
             return df_y_hat
 
         elif fcast == "naive_average":
-            # naive forecast, today will be the average of the previous 7 days
+            # naive forecast, today will be the average of the previous n days
             # read historical values and create time series to be utilities from
-            df_in = ft.read_dataframe(filepath)
-            df_in.set_index("timestamp", inplace=True)
-            y = list(df_in[(df_in.index <= self.ts_delivery_current - 900)][column])
-            y_hat = []
-            ts_pt = self.ts_delivery_current
-            for step in range(-fcast_horizon, 0, 1):
-                val = sum([y[step - i * 96] for i in range(2)])
-                y_hat.append([ts_pt, val / 2])
-                ts_pt += 900
 
-            df_y_hat = pd.DataFrame(y_hat, columns=("timestamp", column)).set_index("timestamp")
+            # Load file and set timestamp as index
+            df_in = pd.read_feather(filepath).set_index('timestamp')
+
+            # Set the number of days it should be averaged over
+            n_days = 2
+
+            # Reduce the size of the output dataframe and set values to 0
+            df_y_hat = df_in.loc[self.ts_delivery_current: self.ts_delivery_current + (fcast_horizon - 1) * 900, column]
+            df_y_hat[:] = 0
+
+            # Add values of the previous n days for each time step
+            for day in range(1, n_days + 1):
+                df_y_hat += df_in[column].shift(day * 96)
+
+            # Divide by the number of days to get the mean
+            df_y_hat /= n_days
+
+            # Convert to dataframe
+            df_y_hat = df_y_hat.to_frame()
+
+            # # OLD implementation (twice as fast but difficult to understand)
+            # df_in = ft.read_dataframe(filepath)
+            # df_in.set_index("timestamp", inplace=True)
+            # y = list(df_in[(df_in.index <= self.ts_delivery_current - 900)][column])
+            # y_hat = []
+            # ts_pt = self.ts_delivery_current
+            # for step in range(-fcast_horizon, 0, 1):
+            #     val = sum([y[step - i * 96] for i in range(2)])
+            #     y_hat.append([ts_pt, val / 2])
+            #     ts_pt += 900
+            #
+            # df_y_hat = pd.DataFrame(y_hat, columns=("timestamp", column)).set_index("timestamp")
 
             return df_y_hat
 
@@ -475,17 +501,28 @@ class ForecastManager:
 
         elif fcast == "ev_close":
             # "realistic" forecast for electric vehicles. As soon as the vehicle arrives, we know the SOC and for
-            # how long the vehicle will be available. Nothing is knows beyond the current charging cycle
-            df_in = ft.read_dataframe(filepath)
-            df_in.set_index("timestamp", inplace=True)
-            df_in = df_in[(self.ts_delivery_current <= df_in.index)
-                          & (df_in.index <= self.ts_delivery_current + 900 * fcast_horizon - 1)]
-            df_y_hat = df_in
-            state_vehicle = 1
-            for ix, row in df_in.iterrows():
-                if row["availability"] == 0:
-                    state_vehicle = 0
-                df_y_hat.loc[ix, column] = row[column] * state_vehicle
+            #  how long the vehicle will be available. Nothing is knows beyond the current charging cycle
+
+            # Read timeseries of plant
+            df_y_hat = ft.read_dataframe(filepath)
+            df_y_hat.set_index("timestamp", inplace=True)
+            # Read only from current time step until end of forecast horizon
+            df_y_hat = df_y_hat[(self.ts_delivery_current <= df_y_hat.index)
+                          & (df_y_hat.index <= self.ts_delivery_current + 900 * (fcast_horizon - 1))]
+
+            # Find the index of the first occurrence of 0 in the "availability" column
+            first_zero_index = np.argmax(df_y_hat['availability'].values == 0)
+
+            # If there is a 0 in the availability column set all subsequent rows of target column to 0
+            if first_zero_index > 0:
+                df_y_hat.loc[first_zero_index:, column] = 0
+
+            # OLD method of computing ev_close
+            # state_vehicle = 1
+            # for ix, row in df_in.iterrows():
+            #     if row["availability"] == 0:
+            #         state_vehicle = 0
+            #     df_y_hat.loc[ix, column] = row[column] * state_vehicle
             return df_y_hat
 
         elif fcast == "nn":

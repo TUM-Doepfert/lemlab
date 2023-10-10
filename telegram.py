@@ -1,9 +1,4 @@
 import requests
-from datetime import datetime, time
-import pandas as pd
-import time
-import math
-import os
 
 # Telegram setup for TUMEWKbot
 BOT_TOKEN = "1857233194:AAHF5Fi8IQnGeICsbqrDpGBjgpYajLJOgMk"

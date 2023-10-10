@@ -1,5 +1,7 @@
 .idea
+**/input_data
 **/scenarios
 **/simulation_results
+**/results
 **/__pycache__
-**/2022_lumpp_frontiers_lemlab
+**/xx_publication_materials

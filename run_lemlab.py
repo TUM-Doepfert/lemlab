@@ -1,7 +1,6 @@
 """This script runs all the lemlab scenarios specified in the scenario folder.
 The scenarios already need to be converted from the hamlet formet"""
 
-from hamlet2lemlab import h2l
 from telegram import Telegram
 from lemlab import ScenarioExecutor
 import os
@@ -19,7 +18,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-MACHINES = ['RM1', 'RM2', 'STROM1', 'T14G3', 'LAPTOP']
+MACHINES = ['RM1', 'RM2', 'STROM1', 'STROM2', 'T14G3']
 MACHINE = MACHINES[-1]  # Machine that is currently worked on
 
 
@@ -28,8 +27,8 @@ def main(lemlab_scenario: str = './scenarios', lemlab_results: str = './simulati
     scenarios = next(os.walk(lemlab_scenario))[1]
     num_scenarios = len(scenarios)
 
-    # # Prepare the progressbar
-    # pbar = tqdm(total=len(scenarios))
+    # Prepare the progressbar
+    pbar = tqdm(total=len(scenarios), unit='scenario')
 
     # Create a telegram bot
     bot = Telegram()
@@ -71,9 +70,9 @@ def main(lemlab_scenario: str = './scenarios', lemlab_results: str = './simulati
         # string = f'{MACHINE}: Starting {scenario} at {time.strftime("%H:%M:%S")}'
         # bot.send_message(string)
 
-        # # Set the progressbar description
-        # string = f"Running {scenario}"
-        # pbar.set_description(string)
+        # Set the progressbar description
+        string = f"Running {scenario}"
+        pbar.set_description(string)
 
         try:
             # Create a scenario executor
@@ -82,13 +81,16 @@ def main(lemlab_scenario: str = './scenarios', lemlab_results: str = './simulati
             # Run the scenario
             simulation.run()
         except Exception as e:
-            # Log error
-            logging.error(traceback.format_exc())
             # Send a message with scenario and current time (H:M:S)
             string = f'{MACHINE}: ERROR in {scenario} at {time.strftime("%H:%M:%S | %d.%m.%Y")} \n' \
-                     f'Error: {e}'
+                     f'Skipping scenario'
             bot.send_message(string)
-            raise e
+            # Log error
+            logging.error(traceback.format_exc())
+            # Skip scenario
+            print(f'\n {string}')
+            # raise e
+            continue
 
         # Set time counter
         duration.append(time.perf_counter())
@@ -103,8 +105,8 @@ def main(lemlab_scenario: str = './scenarios', lemlab_results: str = './simulati
         #          f'in {time.strftime("%H:%M:%S", time.gmtime(duration[counter] - duration[counter - 1]))}'
         # bot.send_message(string)
 
-        # # Update the progressbar
-        # pbar.update()
+        # Update the progressbar
+        pbar.update()
 
         # Save date as old date
         old_date = date

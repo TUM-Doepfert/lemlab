@@ -158,7 +158,7 @@ prosumer:
 
   ################################ general settings ################################
 
-  "general_number_of": 20                   # number of prosumers (single family homes) to simulate
+  "general_number_of": 10                   # number of prosumers (single family homes) to simulate
 
   "general_solver": "gurobi"                # installed pyomo compatible solver
                                             # preferably MIQP capable, e.g. "gurobi" and "cplex"
@@ -194,7 +194,7 @@ prosumer:
 
   ################################ household load settings ####################################
 
-  "hh_has_submeter": false                  # does the household load have a physical submeter or must a virtual meter
+  "hh_has_submeter": true                  # does the household load have a physical submeter or must a virtual meter
                                             # be created?
                                             # Please note that if this value is true, calculate_virtual_submeters in
                                             # "lem" should be set to true, as the settlement algorithm needs to
@@ -250,14 +250,14 @@ prosumer:
 
   ################################ small-scale photovoltaic settings ####################################
 
-  "pv_fraction": 0.7                          # fraction of prosumers with pv plants
+  "pv_fraction": 1                          # fraction of prosumers with pv plants
 
   "pv_sizing_power": 1.5                    # sizing of pv plant
                                             # 1 = 1000 wp of pv for every 1000 kwh/a of household consumption
 
   "pv_sizing_power_deviation": 0.2          # random positive/negative deviation from pv_sizing_power
 
-  "pv_controllable": true                   # can the pv inverter be controlled? true or false
+  "pv_controllable": false                   # can the pv inverter be controlled? true or false
 
   "pv_fcast": "perfect"                     # pv production forecasting method
                                             #   "perfect" - perfect knowledge of the future
@@ -276,7 +276,7 @@ prosumer:
 
   ################################ small-scale wind settings ####################################
 
-  "wind_fraction": 0.2                      # fraction of prosumers with wind power plants
+  "wind_fraction": 0                      # fraction of prosumers with wind power plants
 
   "wind_sizing_power": 0.7                  # sizing of wind power plant
                                             # 1 = 1000 w of wind for every 1000 kwh/a of household consumption
@@ -302,7 +302,7 @@ prosumer:
 
   ################################ battery settings ####################################
 
-  "bat_fraction": 0.4                       # fraction of prosumers with batteries
+  "bat_fraction": 1                       # fraction of prosumers with batteries
 
   "bat_fraction_dependent_on_pv": true      # True: bat_fraction is only applied to pv owners
                                             # False: any prosumer may own a battery
@@ -326,7 +326,7 @@ prosumer:
 
   ################################ heat pump settings ####################################
 
-  "hp_fraction": 0.2                        # fraction of prosumers with heat pumps
+  "hp_fraction": 1                        # fraction of prosumers with heat pumps
 
   "hp_sizing_power": 1                      # sizing of hp plant
                                             # 1 = thermal power of hp equals ceiled max heat demand
@@ -396,7 +396,7 @@ prosumer:
 
   ################################ electric vehicle settings ####################################
 
-  "ev_fraction": 0.25                       # fraction of prosumers with evs
+  "ev_fraction": 1                       # fraction of prosumers with evs
 
   "ev_efficiency": 0.9                      # one way charging efficiency of the vehicle
 
@@ -429,7 +429,7 @@ prosumer:
 
   ################################ fixed generator settings ####################################
 
-  "fixedgen_fraction": 0.05                 # fraction of prosumers with constant power generators
+  "fixedgen_fraction": 0                 # fraction of prosumers with constant power generators
                                             # (p.u. power read from file)
 
   "fixedgen_power": 5000                    # peak power of constant power generator

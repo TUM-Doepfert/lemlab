@@ -95,6 +95,7 @@ def market_clearing_par(db_obj,
                 positions_cleared = calc_market_position_shares(db_obj, config_lem,
                                                                 offers_ts_d, bids_ts_d, positions_cleared)
 
+        # print(f'{t_clear}: \n {positions_cleared.iloc[:10].to_string()}')
         return positions_cleared
 
 
@@ -1705,7 +1706,7 @@ def _add_retailer_bids(db_obj,
     return sorted_bids_t_d, sorted_offers_t_d
 
 
-def _post_processing_results(db_obj, results, t_clearing_start):
+def _post_processing_results(db_obj, results, t_clearing_start=None):
     # Add clearing time and drop matching id
     results[db_obj.db_param.T_CLEARED] = t_clearing_start if t_clearing_start is not None else round(time.time())
     # Drop all unnecessary columns
