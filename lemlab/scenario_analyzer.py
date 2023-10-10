@@ -134,7 +134,7 @@ class ScenarioAnalyzer:
                                               f"{db_p.NAME_TABLE_READINGS_METER_DELTA}.csv", index_col=0)
 
         df_results = df_meter_readings_delta[df_meter_readings_delta[db_p.ID_METER].isin(list_main_meters)]
-        df_results = df_results.groupby(db_p.TS_DELIVERY).sum() * self.conv_to_kW
+        df_results = df_results.groupby(db_p.TS_DELIVERY).sum(numeric_only=True) * self.conv_to_kW
         df_results.columns = ["negative_flow_kW", "positive_flow_kW"]
         df_results["negative_flow_kW"] = - df_results["negative_flow_kW"]
         df_results["net_flow_kW"] = df_results["positive_flow_kW"] + df_results["negative_flow_kW"]
@@ -280,9 +280,9 @@ class ScenarioAnalyzer:
         df_transactions = df_transactions[df_transactions[db_p.TS_DELIVERY] <= self.max_time]
         df_transactions[db_p.DELTA_BALANCE] = df_transactions[db_p.DELTA_BALANCE] * self.conv_to_EUR
         df_temp_pos = df_transactions[df_transactions[db_p.QTY_ENERGY] >= 0]
-        df_temp_pos = df_temp_pos.groupby(db_p.ID_USER).sum()
+        df_temp_pos = df_temp_pos.groupby(db_p.ID_USER).sum(numeric_only=True)
         df_temp_neg = df_transactions[df_transactions[db_p.QTY_ENERGY] < 0]
-        df_temp_neg = df_temp_neg.groupby(db_p.ID_USER).sum()
+        df_temp_neg = df_temp_neg.groupby(db_p.ID_USER).sum(numeric_only=True)
         df_results["revenue_sold_€"] = df_temp_pos[db_p.DELTA_BALANCE]
         df_results["cost_bought_€"] = - df_temp_neg[db_p.DELTA_BALANCE]
         df_results = df_results.fillna(0)
@@ -527,12 +527,12 @@ class ScenarioAnalyzer:
                                       index_col=0)
         df_transactions = df_transactions[df_transactions[db_p.TS_DELIVERY] <= self.max_time]
         df_temp_pos = df_transactions[df_transactions[db_p.QTY_ENERGY] >= 0]
-        df_temp_pos = df_temp_pos.groupby(db_p.ID_USER).sum()
+        df_temp_pos = df_temp_pos.groupby(db_p.ID_USER).sum(numeric_only=True)
         df_info["energy_sold_kWh"] = df_temp_pos[db_p.QTY_ENERGY] * self.conv_to_kWh
         df_info["revenue_sold_€"] = df_temp_pos[db_p.DELTA_BALANCE] * self.conv_to_EUR
         df_temp_neg = df_transactions[df_transactions[db_p.QTY_ENERGY] < 0]
         df_temp_neg_energy = df_temp_neg[df_temp_neg[db_p.TYPE_TRANSACTION].isin(["market"])]. \
-            groupby(db_p.ID_USER).sum()
+            groupby(db_p.ID_USER).sum(numeric_only=True)
         df_info["energy_bought_kWh"] = - df_temp_neg_energy[db_p.QTY_ENERGY] * self.conv_to_kWh
         # df_temp_neg_cost = df_temp_neg.groupby(db_p.ID_USER).sum()
         df_info["cost_bought_€"] = - df_temp_neg_energy[db_p.DELTA_BALANCE] * self.conv_to_EUR
@@ -555,7 +555,7 @@ class ScenarioAnalyzer:
         df_consumption = df_consumption[df_consumption["energy_in"] > 0]  # delete all generators
         df_consumption["energy_consumed"] = df_consumption["energy_in"]  # "- df_consumption["energy_out"]",
         #     if battery discharge to be subtracted
-        df_consumption = df_consumption.groupby("id_user").sum()
+        df_consumption = df_consumption.groupby("id_user").sum(numeric_only=True)
         df_info["consumption_kWh"] = df_consumption["energy_consumed"] / 1000
         # avg_price: negative balance means positive price  (you have to pay for every kWh);
         # positive balance means negative price (you receive money for every kWh)
@@ -564,7 +564,7 @@ class ScenarioAnalyzer:
         df_info.loc[abs(df_info["avg_price_€/kWh"]) == float("inf"), "avg_price_€/kWh"] = 0
 
         # Group all participants by PV_Bat_EV_HP_Wind_Fix and create list of single values for boxplots
-        df_temp = df_info.groupby("PV_Bat_EV_HP_Wind_Fix").sum()
+        df_temp = df_info.groupby("PV_Bat_EV_HP_Wind_Fix").sum(numeric_only=True)
         df_temp["avg_price_€/kWh"] = - df_temp["balance_€"] / df_temp["consumption_kWh"]
         df_temp["avg_price_€/kWh"] = - df_temp["cost_bought_€"].abs() / df_temp["energy_bought_kWh"]
 
@@ -679,11 +679,11 @@ class ScenarioAnalyzer:
         df_results.set_index("timestamp", inplace=True)
 
         # Get data from market results
-        df_results["energy_kWh"] = df_market_results.groupby(db_p.TS_DELIVERY).sum()[db_p.QTY_ENERGY_TRADED] * \
+        df_results["energy_kWh"] = df_market_results.groupby(db_p.TS_DELIVERY).sum(numeric_only=True)[db_p.QTY_ENERGY_TRADED] * \
                                    self.conv_to_kWh
         df_market_results["costs"] = df_market_results[db_p.QTY_ENERGY_TRADED] * \
                                      df_market_results[column_price]
-        df_results["cost_€"] = df_market_results.groupby(db_p.TS_DELIVERY).sum()["costs"] * self.conv_to_EUR
+        df_results["cost_€"] = df_market_results.groupby(db_p.TS_DELIVERY).sum(numeric_only=True)["costs"] * self.conv_to_EUR
         df_results["price_€/kWh"] = df_results["cost_€"] / df_results["energy_kWh"]
 
         # Get the shares of the different energy types
@@ -694,10 +694,10 @@ class ScenarioAnalyzer:
         df_market_results["energy_greloc"] = df_market_results[db_p.QTY_ENERGY_TRADED] * \
                                              df_market_results["share_quality_offers_cleared_green_local"] / 100
 
-        df_results["energy_loc_kWh"] = (df_market_results.groupby(db_p.TS_DELIVERY).sum()["energy_loc"] +
-                                        df_market_results.groupby(db_p.TS_DELIVERY).sum()["energy_greloc"]) * \
+        df_results["energy_loc_kWh"] = (df_market_results.groupby(db_p.TS_DELIVERY).sum(numeric_only=True)["energy_loc"] +
+                                        df_market_results.groupby(db_p.TS_DELIVERY).sum(numeric_only=True)["energy_greloc"]) * \
                                        self.conv_to_kWh
-        df_results["energy_greloc_kWh"] = df_market_results.groupby(db_p.TS_DELIVERY).sum()["energy_greloc"] * \
+        df_results["energy_greloc_kWh"] = df_market_results.groupby(db_p.TS_DELIVERY).sum(numeric_only=True)["energy_greloc"] * \
                                        self.conv_to_kWh
 
         df_results["loc_share"] = df_results["energy_loc_kWh"] / df_results["energy_kWh"]
@@ -887,15 +887,15 @@ class ScenarioAnalyzer:
 
         for column in df_balance.columns.get_level_values(level=0).unique():
             df_balance.loc[:, (column, "revenue_€")] = df_temp_revenue[df_temp_revenue[db_p.ID_USER] == column].\
-                groupby(db_p.TS_DELIVERY).sum()[db_p.DELTA_BALANCE] * self.conv_to_EUR
+                groupby(db_p.TS_DELIVERY).sum(numeric_only=True)[db_p.DELTA_BALANCE] * self.conv_to_EUR
             df_balance.loc[:, (column, "balancing_pos_€")] = df_temp_bal_pos[df_temp_bal_pos[db_p.ID_USER] == column].\
-                groupby(db_p.TS_DELIVERY).sum()[db_p.DELTA_BALANCE] * self.conv_to_EUR
+                groupby(db_p.TS_DELIVERY).sum(numeric_only=True)[db_p.DELTA_BALANCE] * self.conv_to_EUR
             df_balance.loc[:, (column, "balancing_neg_€")] = df_temp_bal_neg[df_temp_bal_neg[db_p.ID_USER] == column].\
-                groupby(db_p.TS_DELIVERY).sum()[db_p.DELTA_BALANCE] * self.conv_to_EUR
+                groupby(db_p.TS_DELIVERY).sum(numeric_only=True)[db_p.DELTA_BALANCE] * self.conv_to_EUR
             df_balance.loc[:, (column, "levies_€")] = df_temp_levies[df_temp_levies[db_p.ID_USER] == column].\
-                groupby(db_p.TS_DELIVERY).sum()[db_p.DELTA_BALANCE] * self.conv_to_EUR
+                groupby(db_p.TS_DELIVERY).sum(numeric_only=True)[db_p.DELTA_BALANCE] * self.conv_to_EUR
             df_balance.loc[:, (column, "market_€")] = df_temp_market[df_temp_market[db_p.ID_USER] == column].\
-                groupby(db_p.TS_DELIVERY).sum()[db_p.DELTA_BALANCE] * self.conv_to_EUR
+                groupby(db_p.TS_DELIVERY).sum(numeric_only=True)[db_p.DELTA_BALANCE] * self.conv_to_EUR
             df_balance = df_balance.fillna(0)
             df_balance.loc[:, (column, "balance_€")] = df_balance[column]["revenue_€"] \
                                                        + df_balance[column]["balancing_pos_€"] \
@@ -964,7 +964,7 @@ class ScenarioAnalyzer:
         # Gather values form df_market_results and calculate weighted average
         df_results["timestamp"] = sorted(df_market_results[db_p.TS_DELIVERY].unique())
         df_results.set_index("timestamp", inplace=True)
-        df_temp = df_market_results.groupby(db_p.TS_DELIVERY).sum()
+        df_temp = df_market_results.groupby(db_p.TS_DELIVERY).sum(numeric_only=True)
         df_results["total_cost_€"] = df_temp["costs_€"]
         df_results["total_energy_kWh"] = df_temp[db_p.QTY_ENERGY_TRADED] * self.conv_to_kWh
         df_results["avg_price_€/kWh"] = df_results["total_cost_€"] / df_results["total_energy_kWh"]
@@ -1269,7 +1269,7 @@ class ScenarioPlotter:
             self.ax2.set_xlabel(xlabel=xlabel)
             self.ax2.tick_params(axis='both', which='major')
             self.ax2.autoscale(enable=True, axis='x', tight=True)
-            self.ax.grid(b=False)
+            self.ax.grid(alpha=0)
 
         plt.tight_layout()
 

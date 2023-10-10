@@ -527,7 +527,7 @@ def set_community_price(db_obj, path_simulation, lem_config, list_ts_delivery):
         submeter_flows = db_obj.get_meter_readings_by_type(ts_delivery=ts_d,
                                                            types_meters=[0, 1])
         # determine energy exchange across market boundaries
-        df_outside_flow = main_meter_flows.groupby("ts_delivery").sum()
+        df_outside_flow = main_meter_flows.groupby("ts_delivery").sum(numeric_only=True)
         if len(main_meter_flows):
             outside_flow = df_outside_flow.iloc[0]["energy_in"] - df_outside_flow.iloc[0]["energy_out"]
             outside_flow = max(outside_flow, 0)
@@ -550,7 +550,7 @@ def set_community_price(db_obj, path_simulation, lem_config, list_ts_delivery):
         submeter_flows["id_meter_main"] = submeter_flows["id_meter"]
         submeter_flows = submeter_flows.replace({"id_meter_main": map_submeter_to_main})
         # group by timestep and main meter
-        submeter_flows = submeter_flows.groupby("id_meter_main").sum()
+        submeter_flows = submeter_flows.groupby("id_meter_main").sum(numeric_only=True)
         # add main meter flows out
         submeter_flows["energy_out_main_meter"] = submeter_flows.index
         map_meter_main_to_energy_out = dict([(i, a) for i, a in zip(main_meter_flows[db_obj.db_param.ID_METER],

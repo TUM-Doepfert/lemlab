@@ -334,7 +334,7 @@ class DatabaseConnection:
             matched_bids["net_bids"] = matched_bids["qty_energy_offered"] - matched_bids["qty_energy_bid"]
 
             if len(matched_bids):
-                matched_bids_by_timestep["net_bids"] = matched_bids.groupby(self.db_param.TS_DELIVERY).sum()["net_bids"]
+                matched_bids_by_timestep["net_bids"] = matched_bids.groupby(self.db_param.TS_DELIVERY).sum(numeric_only=True)["net_bids"]
             else:
                 pass
             matched_bids_by_timestep = matched_bids_by_timestep.fillna(0)
