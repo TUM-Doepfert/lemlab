@@ -163,10 +163,12 @@ class Prosumer:
             p_max = p_max.loc[self.ts_delivery_prev, "power"]
 
             # Set maximum power output according to controllability
-            if self.plant_dict[_plant].get("controllable"):
-                return _model.p_pv[_plant] <= p_max
-            else:
-                return _model.p_pv[_plant] == p_max
+            #if self.plant_dict[_plant].get("controllable"):
+            #    return _model.p_pv[_plant] <= p_max
+            #else:
+            #    return _model.p_pv[_plant] == p_max
+            # Ensure that power output is always maximum power
+            return _model.p_pv[_plant] == p_max
 
         if self._get_list_plants(plant_type="pv"):
             rtc_model.con_pv = pyo.Constraint(self._get_list_plants(plant_type="pv"),
@@ -768,7 +770,7 @@ class Prosumer:
             status = pyo.SolverFactory(self.config_dict["solver"]).solve(rtc_model)
             # rtc_model.write('datei_rtc.lp', io_options={'symbolic_solver_labels': True})
             if status.solver.termination_condition != pyo.TerminationCondition.optimal:
-                rtc_model.write('datei_rtc_error.lp', io_options={'symbolic_solver_labels': True})
+                rtc_model.write(f'datei_rtc_error_{self.user_id}.lp', io_options={'symbolic_solver_labels': True})
                 print(f"RTC Model was not solved to optimality, but with status {status.solver.termination_condition}")
 
             # assign results to instance variables for logging
@@ -840,11 +842,15 @@ class Prosumer:
                 with open(f"{self.path}/soc_{hp}.json", "r") as read_file:
                     hp_soc = json.load(read_file)
 
+                #if self.user_id == '0000000001':
+                #    print()
+                #    print(f'hp_soc (before): {int(hp_soc)}')
+
                 # Read all hp information
                 cop = df_hp.at[self.ts_delivery_prev, "cop"]        # COP
                 p_el_max = self.plant_dict[hp]['power']             # Max el power
                 p_th_max = p_el_max * cop                           # Max th power
-                p_heat = df_hp.at[self.ts_delivery_prev, "heat"]    # Heat demand
+                p_heat = df_hp.at[self.ts_delivery_prev, "heat"]    # Heat demand (negative value as it is demand)
 
                 # Determine if hp was on before (will determine operation)
                 state = self.plant_dict[hp].get("rtc_state", "off")
@@ -854,66 +860,100 @@ class Prosumer:
                 #   enough heat but these should be negligible
                 # If state was previously on, try to keep it on (keep HP running)
                 if state == "on":
+                    #if self.user_id == '0000000001':
+                    #    print('on')
                     # if the hp can provide enough heat and the remaining power can be used to fill the storage, fill
                     # storage with remaining power
                     if (abs(p_th_max) >= abs(p_heat)) and \
-                            ((hp_soc + (p_heat - p_th_max) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
+                            ((hp_soc + (p_th_max - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
                              <= self.plant_dict[hp]["capacity"]):
+                        #if self.user_id == '0000000001':
+                        #    print('hp fills storage at full power')
+                        #    print(abs(p_th_max), abs(p_heat))
+                        #    print((hp_soc + (p_heat - p_th_max) * self.plant_dict[hp]["efficiency"] * 900 / 3600), self.plant_dict[hp]["capacity"])
                         # if the hp can provide enough heat, keep it on and store excess heat in storage
                         p_el = p_el_max
                         p_th = p_el * cop
-                        hp_soc += (p_heat - p_th_max) * self.plant_dict[hp]["efficiency"] * 900 / 3600
+                        hp_soc += (p_th - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600
                         # keep hp on
                         state = 'on'
+                        msg = 'hp fills storage at full power'
                     # if the hp can provide enough heat but the storage would be overfilled by storing excess heat, reduce
                     # the power of the hp to fill the storage to 100 % and turn hp afterwards off
                     elif (abs(p_th_max) >= abs(p_heat)) and \
-                            ((hp_soc + (p_heat - p_th_max) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
+                            ((hp_soc + (p_th_max - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
                              > self.plant_dict[hp]["capacity"]):
+                        #if self.user_id == '0000000001':
+                        #    print('hp fills storage to maximum')
+                        #    print(abs(p_th_max), abs(p_heat))
+                        #    print((hp_soc + (p_heat - p_th_max) * self.plant_dict[hp]["efficiency"] * 900 / 3600), self.plant_dict[hp]["capacity"])
+
                         p_th_soc_max = (self.plant_dict[hp]["capacity"] - hp_soc) / self.plant_dict[hp]["efficiency"] \
                                        * 900 / 3600  # max th power to fill storage
-                        p_th = p_heat + p_th_soc_max  # th power to fill storage and provide heat
+                        p_th = abs(p_heat) + p_th_soc_max  # th power to fill storage and provide heat
+                        #if self.user_id == '0000000001':
+                        #    print(f'power reduced to {p_th} from {p_th_max}')
                         p_el = p_th / cop  # el power to fill storage and provide heat
                         hp_soc = self.plant_dict[hp]["capacity"]
                         # turn hp off
                         state = 'off'
+                        msg = 'hp fills storage to maximum'
                     # if the hp cannot provide enough heat, provide the remainder using the storage
                     elif abs(p_th_max) < abs(p_heat):
+                        #if self.user_id == '0000000001':
+                        #    print('storage helps hp to fill heat demand')
+                        #    print(abs(p_th_max), abs(p_heat))
                         p_el = p_el_max  # set el power to max
                         p_th = p_th_max  # set th power provided by hp to max
-                        hp_soc = max(0, hp_soc - (p_heat - p_th) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
-                        p_th = p_heat  # set th power to heat demand
+                        hp_soc = max(0, hp_soc - (abs(p_heat) - p_th) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
+                        p_th = abs(p_heat)  # set th power to heat demand
                         # keep hp on
                         state = 'on'
+                        msg = 'storage helps hp to fill heat demand'
                     else:
                         raise ValueError("Something went wrong in the heat pump controller")
                 # if state was previously off, try to keep it off
                 elif state == 'off':
+                    #if self.user_id == '0000000001':
+                    #    print('off')
+                    #    print(-p_heat * 900 / 3600, hp_soc * self.plant_dict[hp]["efficiency"])
                     # if the storage can provide enough heat, cover demand using storage
-                    if p_heat * 900 / 3600 <= hp_soc / self.plant_dict[hp]["efficiency"]:
+                    if -p_heat * 900 / 3600 <= hp_soc * self.plant_dict[hp]["efficiency"]:
+                        #if self.user_id == '0000000001':
+                        #    print(f'only storage')
+                        #    print(p_heat)
                         p_el = 0
-                        p_th = p_heat
-                        hp_soc -= p_heat / self.plant_dict[hp]["efficiency"] * 900 / 3600
+                        p_th = abs(p_heat)
+                        hp_soc -= abs(p_heat) / self.plant_dict[hp]["efficiency"] * 900 / 3600
                         # keep hp off
                         state = 'off'
+                        msg = 'only storage'
                     # if the storage cannot provide enough heat, turn hp on and cover demand using hp
-                    elif p_heat * 900 / 3600 > hp_soc / self.plant_dict[hp]["efficiency"]:
+                    elif -p_heat * 900 / 3600 > hp_soc * self.plant_dict[hp]["efficiency"]:
                         # case that hp can cover it alone
                         if abs(p_th_max) >= abs(p_heat):
+                            #if self.user_id == '0000000001':
+                            #    print(f'hp turned back on')
+                            #    print(abs(p_th_max), abs(p_heat))
                             # if the hp can provide enough heat, keep it on and store excess heat in storage
                             p_el = p_el_max
                             p_th = p_el * cop
-                            hp_soc += (p_heat - p_th_max) * self.plant_dict[hp]["efficiency"] * 900 / 3600
+                            hp_soc += (p_th - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600
                             # turn hp on
                             state = 'on'
+                            msg = 'hp turned back on'
                         # case that hp cannot cover it alone
                         elif abs(p_th_max) < abs(p_heat):
+                            #if self.user_id == '0000000001':
+                            #    print(f'hp with storage')
+                            #    print(abs(p_th_max), abs(p_heat))
                             p_el = p_el_max  # set el power to max
                             p_th = p_th_max  # set th power provided by hp to max
-                            hp_soc = max(0, hp_soc - (p_heat - p_th) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
-                            p_th = p_heat  # set th power to heat demand
+                            hp_soc = max(0, hp_soc - (abs(p_heat) - p_th) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
+                            p_th = abs(p_heat)  # set th power to heat demand
                             # turn hp on
                             state = 'on'
+                            msg = 'hp with storage'
                     else:
                         raise ValueError("Something went wrong in the heat pump controller")
                 else:
@@ -927,6 +967,14 @@ class Prosumer:
                 # Update plant file
                 with open(f"{self.path}/config_plants.json", "w") as write_file:
                     json.dump(self.plant_dict, write_file)
+
+                #if self.user_id == '0000000001':
+                #    print(f'hp_soc (after): {int(hp_soc)}')
+
+                #if p_th < 0:
+                #    print(self.user_id)
+                #    print(p_th)
+                #    print(msg)
 
                 # Update soc file
                 with open(f"{self.path}/soc_{hp}.json", "w") as write_file:
@@ -1180,6 +1228,7 @@ class Prosumer:
 
         # Load the forecasts
         self.mpc_table = ft.read_dataframe(f"{self.path}/fcasts_current.ft").set_index("timestamp")
+        self.mpc_table = self.mpc_table.fillna(0)
 
         # Choose which controller to use
         # Rule-based if household has no controllable loads
@@ -1442,6 +1491,9 @@ class Prosumer:
                     # Add predicted output of PV plant for each plant to given timestep
                     model.sum_pv[t] += self.mpc_table.loc[t_d, f"power_{plant}"]
                     # Set upper bound to smaller equal of predicted output if PV CAN be controlled
+                    #print(self.user_id)
+                    #print(plant)
+                    #print(self.mpc_table)
                     if self.plant_dict[plant].get("controllable"):
                         model.con_p_pv.add(
                             expr=model.p_pv[plant, t] <= round(self.mpc_table.loc[t_d, f"power_{plant}"], 1))
@@ -1624,7 +1676,7 @@ class Prosumer:
             # # Check if model was solved to optimality
             # model.write('datei.lp', io_options={'symbolic_solver_labels': True})
             if status.solver.termination_condition != pyo.TerminationCondition.optimal:
-                model.write('datei_mpc_error.lp', io_options={'symbolic_solver_labels': True})
+                model.write(f'datei_mpc_error_{self.user_id}.lp', io_options={'symbolic_solver_labels': True})
                 print(f"Model was not solved to optimality, but with status {status.solver.termination_condition}")
                 print(f'The culprit was {self.path}')
 

@@ -136,8 +136,8 @@ class ForecastManager:
                 if self.ts_delivery_current - last_update >= period_update:
                     if self.plant_dict[plant].get("type") in ["pv", "fixedgen"]:
                         # retrieve forecast for pv and fixed_gen plants, scale PU forecast by plant power
-                        df_temp = self.__update_single_forecast(id_plant=plant)
-                        df_temp["power"] *= self.plant_dict[plant].get("power")
+                        df_temp = self.__update_single_forecast(id_plant=plant).round().astype(int)
+                        # df_temp['power'] *= config_dict[plant]['power']  # not needed as not in pu anymore
                         # rename column and merge into forecast table
                         df_temp.rename(columns={'power': f'power_{plant}'}, inplace=True)
                         self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")

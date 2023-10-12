@@ -4,7 +4,7 @@ import os
 # in this example we execute the demo scenario
 
 if __name__ == "__main__":
-    sim_name = "Countryside_pv_1.0_hp_1.0_ev_1.0_winter_moreheat"
+    sim_name = "Countryside_pv_1.0_hp_1.0_ev_1.0_winter_woLEM"
 
     simulation = ScenarioExecutor(path_scenario=f"../scenarios/{sim_name}",
                                   path_results=f"../simulation_results/{sim_name}")

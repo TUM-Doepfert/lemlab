@@ -248,6 +248,10 @@ class ScenarioAnalyzer:
         # Line plot of main meter
         yvalues = df_results['main'].transpose().values.tolist()
         scplotter.ax.plot(xvalues, yvalues, color=colors[0])
+        # Textbox with peak power
+        peak_power = int(round(max([abs(val) for val in yvalues])))
+        scplotter.ax.text(0.05, 0.9, f'Abs. peak power: {peak_power} kW', transform=scplotter.ax.transAxes,
+                          fontsize=12, bbox=dict(facecolor='white', alpha=0.5))
         # Stackplot of submeters (positive values)
         yvalues = df_pos.transpose().values.tolist()
         scplotter.ax.stackplot(xvalues, yvalues, baseline="zero", colors=colors[1:])

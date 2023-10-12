@@ -1,4 +1,5 @@
-"""Plots the plants of the prosumer. Needs to be in the prosumer directory."""
+"""Plots the plants of the prosumer.
+Needs to be in the scenario directory."""
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -9,7 +10,8 @@ import json
 plant_type = 'pv'
 
 # Get all prosumers
-prosumers = next(os.walk('.'))[1]
+path = './prosumer'
+prosumers = next(os.walk(path))[1]
 
 # Create df for all prosumers
 df_all = pd.DataFrame()
@@ -18,7 +20,7 @@ num_plants = 0
 # Loop through all prosumers
 for prosumer in prosumers:
     # Load plant config
-    with open(f'{prosumer}/config_plants.json', 'r') as f:
+    with open(f'{path}/{prosumer}/config_plants.json', 'r') as f:
         plant_config = json.load(f)
 
     # Get all plants of the desired type
@@ -30,7 +32,7 @@ for prosumer in prosumers:
     # Loop through all plants
     for plant in plants:
         # Concatenate all plant data
-        df = pd.read_feather(f'{prosumer}/raw_data_{plant}.ft').set_index('timestamp')
+        df = pd.read_feather(f'{path}/{prosumer}/raw_data_{plant}.ft').set_index('timestamp')
         df_plot = pd.concat([df_plot, df], axis=1)
 
     # Add info to df for all prosumers
