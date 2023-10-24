@@ -233,7 +233,7 @@ class ScenarioAnalyzer:
         # df_results['main'] = df_results[[col for col in df_results.columns if not col.endswith('in')
         #                                     and not col.endswith('out')]].sum(axis=1)
         df_results['main'] = df_results.sum(axis=1)
-        print(df_results.to_string())
+        # print(df_results.to_string())
 
         # Define labels and colors
         labels = ["Main meter", "Battery", "EV", "Household", "Heat pump", "PV"]

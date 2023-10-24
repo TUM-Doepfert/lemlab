@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import traceback
 import random
 import string
+from pprint import pprint
 
 
 def market_clearing_par_pre(db_obj,
@@ -87,7 +88,8 @@ def market_clearing_par(db_obj,
             clearing_pda(db_obj,
                          config_lem,
                          offers_ts_d,
-                         bids_ts_d)
+                         bids_ts_d,
+                         t_clear)
 
         # Check whether market has cleared a volume
         if not positions_cleared.empty:
@@ -1225,6 +1227,7 @@ def clearing_pda(db_obj,
                  config_lem,
                  offers,
                  bids,
+                 t_clear=None,
                  type_clearing=None,
                  shuffle=True,
                  add_premium=False,
@@ -1259,6 +1262,7 @@ def clearing_pda(db_obj,
         offers_uncleared = offers
         bids_uncleared = bids
         return positions_cleared, offers_uncleared, bids_uncleared, offers_cleared, bids_cleared
+
     if type_clearing is None:
         type_clearing = 'da'
     # Exclude bids/offers if they have zero quantity
@@ -1402,6 +1406,10 @@ def clearing_pda(db_obj,
 
     except Exception:
         traceback.print_exc()
+
+    #print()
+    #print(f'Cleared {qty_energy_cleared} MWh at {t_clear}.')
+    #print(positions_cleared.head(10).to_string())
 
     return positions_cleared, offers_uncleared, bids_uncleared, offers_cleared, bids_cleared
 

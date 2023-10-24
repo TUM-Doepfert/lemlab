@@ -15,7 +15,7 @@ from typing import Union
 from random import random
 from lemlab.utilities.forecasting import ForecastManager
 from bisect import bisect_left
-
+from pprint import pprint
 
 class Prosumer:
     """Prosumer defines objects and methods used to simulate a single family home in a local energy market
@@ -92,7 +92,7 @@ class Prosumer:
         # df containing net matched market volumes by timestep (multiple matched offers for each timestamp summated)
         self.matched_bids_by_timestep = None
 
-    def pre_clearing_activity(self, db_obj, clear_positions=False, urbs: bool = True):
+    def pre_clearing_activity(self, db_obj, clear_positions=False, urbs: bool = False):
         self.update_user_preferences(db_obj)
         if urbs:
             self.controller_real_time_urbs()
@@ -832,9 +832,11 @@ class Prosumer:
                     # update measured values
                     self.meas_val[ev] = ev_power * -1
                     meas_grid += ev_power * -1
+
             # the heat pump allows storage to discharge until empty, then charges the storage until full.
             # Optionally, the heat pump will always turn on at 13:00 to maximize PV self consumption or to profit
             # from local feed-in
+            operation_method = 'hp_always_on'  # 'hp_always_on' or 'hp_cyclical'
             for hp in self._get_list_plants(plant_type="hp"):
 
                 # Load the heat pump's and storage soc's files
@@ -842,122 +844,172 @@ class Prosumer:
                 with open(f"{self.path}/soc_{hp}.json", "r") as read_file:
                     hp_soc = json.load(read_file)
 
-                #if self.user_id == '0000000001':
-                #    print()
-                #    print(f'hp_soc (before): {int(hp_soc)}')
+                # Storage variables
+                max_soc = self.plant_dict[hp]["capacity"]           # Max storage capacity
+                min_soc = 0                                         # Min storage capacity
+                st_eff = self.plant_dict[hp]["efficiency"]          # Storage efficiency
+                st_to_full_energy = (max_soc - hp_soc) / st_eff     # Storage to full in Wh
+                st_to_full_power = st_to_full_energy / 0.25         # Storage to full in W
+                st_to_empty_energy = hp_soc * st_eff                # Storage to empty in Wh
+                st_to_empty_power = st_to_empty_energy / 0.25       # Storage to empty in W
 
                 # Read all hp information
                 cop = df_hp.at[self.ts_delivery_prev, "cop"]        # COP
                 p_el_max = self.plant_dict[hp]['power']             # Max el power
                 p_th_max = p_el_max * cop                           # Max th power
                 p_heat = df_hp.at[self.ts_delivery_prev, "heat"]    # Heat demand (negative value as it is demand)
+                heat_diff = abs(p_th_max) - abs(p_heat)             # Difference between max heat and heat demand
 
                 # Determine if hp was on before (will determine operation)
                 state = self.plant_dict[hp].get("rtc_state", "off")
 
-                # Decide what happens depending on the previous state
-                # Note: The controller might include some edge cases in which the system might not be able to provide
-                #   enough heat but these should be negligible
-                # If state was previously on, try to keep it on (keep HP running)
-                if state == "on":
-                    #if self.user_id == '0000000001':
-                    #    print('on')
-                    # if the hp can provide enough heat and the remaining power can be used to fill the storage, fill
-                    # storage with remaining power
-                    if (abs(p_th_max) >= abs(p_heat)) and \
-                            ((hp_soc + (p_th_max - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
-                             <= self.plant_dict[hp]["capacity"]):
-                        #if self.user_id == '0000000001':
-                        #    print('hp fills storage at full power')
-                        #    print(abs(p_th_max), abs(p_heat))
-                        #    print((hp_soc + (p_heat - p_th_max) * self.plant_dict[hp]["efficiency"] * 900 / 3600), self.plant_dict[hp]["capacity"])
-                        # if the hp can provide enough heat, keep it on and store excess heat in storage
-                        p_el = p_el_max
-                        p_th = p_el * cop
-                        hp_soc += (p_th - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600
-                        # keep hp on
-                        state = 'on'
-                        msg = 'hp fills storage at full power'
-                    # if the hp can provide enough heat but the storage would be overfilled by storing excess heat, reduce
-                    # the power of the hp to fill the storage to 100 % and turn hp afterwards off
-                    elif (abs(p_th_max) >= abs(p_heat)) and \
-                            ((hp_soc + (p_th_max - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
-                             > self.plant_dict[hp]["capacity"]):
-                        #if self.user_id == '0000000001':
-                        #    print('hp fills storage to maximum')
-                        #    print(abs(p_th_max), abs(p_heat))
-                        #    print((hp_soc + (p_heat - p_th_max) * self.plant_dict[hp]["efficiency"] * 900 / 3600), self.plant_dict[hp]["capacity"])
+                # Operate depending on operation mode
+                if operation_method == 'hp_always_on':
+                    # Operation mode means that the hp will always provide the heat and storage is only used when the
+                    # heat pump does not suffice
 
-                        p_th_soc_max = (self.plant_dict[hp]["capacity"] - hp_soc) / self.plant_dict[hp]["efficiency"] \
-                                       * 900 / 3600  # max th power to fill storage
-                        p_th = abs(p_heat) + p_th_soc_max  # th power to fill storage and provide heat
+                    # State is always on
+                    state = 'on'
+
+                    # Check if heat pump can provide enough heat and storage is full
+                    if heat_diff > 0 and hp_soc == max_soc:
+                        p_th = abs(p_heat)  # th power to heat demand
+                        p_el = p_th / cop   # el power to provide heat
+                        hp_soc = hp_soc
+                    # Check if heat pump can provide enough heat and storage is not full
+                    elif heat_diff > 0 and hp_soc < max_soc:
+                        # Set power to either max power or power to fill storage
+                        p_th = min(abs(p_heat) + st_to_full_power, p_th_max)  # th power to heat demand and fill storage
+                        p_el = p_th / cop  # el power to provide heat and fill storage
+                        hp_soc = min(max_soc, hp_soc + (p_th - abs(p_heat)) * st_eff * 0.25)
+                    # Check if heat pump cannot provide enough heat
+                    elif heat_diff <= 0:
+                        # Set power to max power
+                        p_th = p_th_max  # th power to heat demand
+                        p_el = p_th / cop  # el power to provide heat
+
+                        # Calculate power that needs to come from the storage
+                        p_th_st = abs(p_heat) - p_th
+                        # Check if storage can provide enough power
+                        if p_th_st <= st_to_empty_power:
+                            hp_soc = max(min_soc, hp_soc - p_th_st * st_eff * 0.25)
+                        else:
+                            print(f'Storage cannot provide enough power: {p_th_st} > {st_to_empty_power}.\n'
+                                  f'Storage was set to empty to keep simulation running.')
+                            hp_soc = min_soc
+
+                elif operation_method == 'hp_cyclical':
+                    # Operation mode means that the hp will cyclically fill the storage. When the storage is full it
+                    # will provide the heat while the hp is off and only turns on once the storage cannot provide heat
+                    # anymore.
+
+                    # Decide what happens depending on the previous state
+                    # Note: The controller might include some edge cases in which the system might not be able to provide
+                    #   enough heat but these should be negligible
+                    # If state was previously on, try to keep it on (keep HP running)
+                    if state == "on":
                         #if self.user_id == '0000000001':
-                        #    print(f'power reduced to {p_th} from {p_th_max}')
-                        p_el = p_th / cop  # el power to fill storage and provide heat
-                        hp_soc = self.plant_dict[hp]["capacity"]
-                        # turn hp off
-                        state = 'off'
-                        msg = 'hp fills storage to maximum'
-                    # if the hp cannot provide enough heat, provide the remainder using the storage
-                    elif abs(p_th_max) < abs(p_heat):
-                        #if self.user_id == '0000000001':
-                        #    print('storage helps hp to fill heat demand')
-                        #    print(abs(p_th_max), abs(p_heat))
-                        p_el = p_el_max  # set el power to max
-                        p_th = p_th_max  # set th power provided by hp to max
-                        hp_soc = max(0, hp_soc - (abs(p_heat) - p_th) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
-                        p_th = abs(p_heat)  # set th power to heat demand
-                        # keep hp on
-                        state = 'on'
-                        msg = 'storage helps hp to fill heat demand'
-                    else:
-                        raise ValueError("Something went wrong in the heat pump controller")
-                # if state was previously off, try to keep it off
-                elif state == 'off':
-                    #if self.user_id == '0000000001':
-                    #    print('off')
-                    #    print(-p_heat * 900 / 3600, hp_soc * self.plant_dict[hp]["efficiency"])
-                    # if the storage can provide enough heat, cover demand using storage
-                    if -p_heat * 900 / 3600 <= hp_soc * self.plant_dict[hp]["efficiency"]:
-                        #if self.user_id == '0000000001':
-                        #    print(f'only storage')
-                        #    print(p_heat)
-                        p_el = 0
-                        p_th = abs(p_heat)
-                        hp_soc -= abs(p_heat) / self.plant_dict[hp]["efficiency"] * 900 / 3600
-                        # keep hp off
-                        state = 'off'
-                        msg = 'only storage'
-                    # if the storage cannot provide enough heat, turn hp on and cover demand using hp
-                    elif -p_heat * 900 / 3600 > hp_soc * self.plant_dict[hp]["efficiency"]:
-                        # case that hp can cover it alone
-                        if abs(p_th_max) >= abs(p_heat):
+                        #    print('on')
+                        # if the hp can provide enough heat and the remaining power can be used to fill the storage, fill
+                        # storage with remaining power
+                        if (abs(p_th_max) >= abs(p_heat)) and \
+                                ((hp_soc + (p_th_max - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
+                                 <= self.plant_dict[hp]["capacity"]):
                             #if self.user_id == '0000000001':
-                            #    print(f'hp turned back on')
+                            #    print('hp fills storage at full power')
                             #    print(abs(p_th_max), abs(p_heat))
+                            #    print((hp_soc + (p_heat - p_th_max) * self.plant_dict[hp]["efficiency"] * 900 / 3600), self.plant_dict[hp]["capacity"])
                             # if the hp can provide enough heat, keep it on and store excess heat in storage
                             p_el = p_el_max
                             p_th = p_el * cop
                             hp_soc += (p_th - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600
-                            # turn hp on
+                            # keep hp on
                             state = 'on'
-                            msg = 'hp turned back on'
-                        # case that hp cannot cover it alone
+                            msg = 'hp fills storage at full power'
+                        # if the hp can provide enough heat but the storage would be overfilled by storing excess heat, reduce
+                        # the power of the hp to fill the storage to 100 % and turn hp afterwards off
+                        elif (abs(p_th_max) >= abs(p_heat)) and \
+                                ((hp_soc + (p_th_max - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
+                                 > self.plant_dict[hp]["capacity"]):
+                            #if self.user_id == '0000000001':
+                            #    print('hp fills storage to maximum')
+                            #    print(abs(p_th_max), abs(p_heat))
+                            #    print((hp_soc + (p_heat - p_th_max) * self.plant_dict[hp]["efficiency"] * 900 / 3600), self.plant_dict[hp]["capacity"])
+
+                            p_th_soc_max = ((self.plant_dict[hp]["capacity"] - hp_soc)
+                                            / self.plant_dict[hp]["efficiency"]
+                                            * 900 / 3600)  # max th power to fill storage
+                            p_th = abs(p_heat) + p_th_soc_max  # th power to fill storage and provide heat
+                            #if self.user_id == '0000000001':
+                            #    print(f'power reduced to {p_th} from {p_th_max}')
+                            p_el = p_th / cop  # el power to fill storage and provide heat
+                            hp_soc = self.plant_dict[hp]["capacity"]
+                            # turn hp off
+                            state = 'off'
+                            msg = 'hp fills storage to maximum'
+                        # if the hp cannot provide enough heat, provide the remainder using the storage
                         elif abs(p_th_max) < abs(p_heat):
                             #if self.user_id == '0000000001':
-                            #    print(f'hp with storage')
+                            #    print('storage helps hp to fill heat demand')
                             #    print(abs(p_th_max), abs(p_heat))
                             p_el = p_el_max  # set el power to max
                             p_th = p_th_max  # set th power provided by hp to max
                             hp_soc = max(0, hp_soc - (abs(p_heat) - p_th) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
                             p_th = abs(p_heat)  # set th power to heat demand
-                            # turn hp on
+                            # keep hp on
                             state = 'on'
-                            msg = 'hp with storage'
+                            msg = 'storage helps hp to fill heat demand'
+                        else:
+                            raise ValueError("Something went wrong in the heat pump controller")
+                    # if state was previously off, try to keep it off
+                    elif state == 'off':
+                        #if self.user_id == '0000000001':
+                        #    print('off')
+                        #    print(-p_heat * 900 / 3600, hp_soc * self.plant_dict[hp]["efficiency"])
+                        # if the storage can provide enough heat, cover demand using storage
+                        if -p_heat * 900 / 3600 <= hp_soc * self.plant_dict[hp]["efficiency"]:
+                            #if self.user_id == '0000000001':
+                            #    print(f'only storage')
+                            #    print(p_heat)
+                            p_el = 0
+                            p_th = abs(p_heat)
+                            hp_soc -= abs(p_heat) / self.plant_dict[hp]["efficiency"] * 900 / 3600
+                            # keep hp off
+                            state = 'off'
+                            msg = 'only storage'
+                        # if the storage cannot provide enough heat, turn hp on and cover demand using hp
+                        elif -p_heat * 900 / 3600 > hp_soc * self.plant_dict[hp]["efficiency"]:
+                            # case that hp can cover it alone
+                            if abs(p_th_max) >= abs(p_heat):
+                                #if self.user_id == '0000000001':
+                                #    print(f'hp turned back on')
+                                #    print(abs(p_th_max), abs(p_heat))
+                                # if the hp can provide enough heat, keep it on and store excess heat in storage
+                                p_el = p_el_max
+                                p_th = p_el * cop
+                                hp_soc += (p_th - abs(p_heat)) * self.plant_dict[hp]["efficiency"] * 900 / 3600
+                                # turn hp on
+                                state = 'on'
+                                msg = 'hp turned back on'
+                            # case that hp cannot cover it alone
+                            elif abs(p_th_max) < abs(p_heat):
+                                #if self.user_id == '0000000001':
+                                #    print(f'hp with storage')
+                                #    print(abs(p_th_max), abs(p_heat))
+                                p_el = p_el_max  # set el power to max
+                                p_th = p_th_max  # set th power provided by hp to max
+                                hp_soc = max(0, hp_soc - (abs(p_heat) - p_th) * self.plant_dict[hp]["efficiency"] * 900 / 3600)
+                                p_th = abs(p_heat)  # set th power to heat demand
+                                # turn hp on
+                                state = 'on'
+                                msg = 'hp with storage'
+                        else:
+                            raise ValueError("Something went wrong in the heat pump controller")
                     else:
-                        raise ValueError("Something went wrong in the heat pump controller")
+                        raise ValueError("Something went wrong with the state of the heat pump")
+
                 else:
-                    raise ValueError("Something went wrong with the state of the heat pump")
+                    raise ValueError("Invalid operation method for heat pump")
 
                 # Update measured values
                 self.meas_val[hp] = p_el * -1
@@ -1003,6 +1055,8 @@ class Prosumer:
                     bat_power = min(max_power, max_power_possible, grid_power_requirement)
                     # update SoC
                     bat_soc_new = bat_soc_old - 0.25 * bat_power / self.plant_dict[bat]["efficiency"]
+                else:
+                    raise ValueError(f"Something went wrong in the battery controller. This is the grid power: {meas_grid}")
 
                 with open(f"{self.path}/soc_{bat}.json", "w") as write_file:
                     json.dump(bat_soc_new, write_file)
@@ -1200,6 +1254,9 @@ class Prosumer:
                     # update SoC
                     bat_soc_new = bat_soc_old - 0.25 * bat_power / self.plant_dict[bat]["efficiency"]
 
+                else:
+                    raise ValueError("Something went wrong in the battery controller")
+
                 with open(f"{self.path}/soc_{bat}.json", "w") as write_file:
                     json.dump(bat_soc_new, write_file)
 
@@ -1229,6 +1286,10 @@ class Prosumer:
         # Load the forecasts
         self.mpc_table = ft.read_dataframe(f"{self.path}/fcasts_current.ft").set_index("timestamp")
         self.mpc_table = self.mpc_table.fillna(0)
+
+        if self.user_id == '0000000004':
+            print(self.user_id)
+            print(self.mpc_table.to_string())
 
         # Choose which controller to use
         # Rule-based if household has no controllable loads
@@ -1301,6 +1362,9 @@ class Prosumer:
                 # Set upper boundaries (setub) for charging/discharging power and TES SOC
                 for hp in self._get_list_plants(plant_type="hp"):
                     for i in range(self.config_dict["mpc_horizon"]):
+                        # TODO: this needs to be changed to the COPs of the timeseries forecast
+                        print(i)
+                        exit()
                         model.q_tes_in[hp, i].setub(
                             float(self.plant_dict[hp]["power"] * 5))  # just assumed 5 as high COP
                         model.q_tes_out[hp, i].setub(float(self.plant_dict[hp]["power"] * 5))
@@ -1686,7 +1750,7 @@ class Prosumer:
                                           self.ts_delivery_current + 900 * self.config_dict["mpc_horizon"], 900)):
                 # PV
                 for pv in self._get_list_plants(plant_type="pv"):
-                    dict_mpc_table[f"power_{pv}"][t_d] = model.p_pv[pv, i]()
+                    dict_mpc_table[f"power_{pv}"][t_d] = int(round(model.p_pv[pv, i]()))
 
                 # Not needed
                 # Wind
@@ -1695,13 +1759,13 @@ class Prosumer:
 
                 # Battery
                 for bat in self._get_list_plants(plant_type="bat"):
-                    dict_mpc_table[f"power_{bat}"][t_d] = model.p_bat_out[bat, i]() - model.p_bat_in[bat, i]()
-                    dict_mpc_table[f"soc_{bat}"][t_d] = model.soc_bat[bat, i]()
+                    dict_mpc_table[f"power_{bat}"][t_d] = int(round(model.p_bat_out[bat, i]() - model.p_bat_in[bat, i]()))
+                    dict_mpc_table[f"soc_{bat}"][t_d] = int(round(model.soc_bat[bat, i]()))
 
                 # EV
                 for ev in self._get_list_plants(plant_type="ev"):
-                    dict_mpc_table[f"power_{ev}"][t_d] = model.p_ev_out[ev, i]() - model.p_ev_in[ev, i]()
-                    dict_mpc_table[f"soc_{ev}"][t_d] = model.soc_ev[ev, i]()
+                    dict_mpc_table[f"power_{ev}"][t_d] = int(round(model.p_ev_out[ev, i]() - model.p_ev_in[ev, i]()))
+                    dict_mpc_table[f"soc_{ev}"][t_d] = int(round(model.soc_ev[ev, i]()))
                     dict_mpc_table[f"soc_min_{ev}"][t_d] = min(dict_soc_ev_min[ev][i],
                                                                self.plant_dict[ev].get("capacity"))
                     # Temporary check for errors in the electric vehicle charging routine
@@ -1721,12 +1785,12 @@ class Prosumer:
 
                 # Heat pump
                 for hp in self._get_list_plants(plant_type="hp"):
-                    dict_mpc_table[f"power_{hp}"][t_d] = model.p_hp[hp, i]()
-                    dict_mpc_table[f"soc_{hp}"][t_d] = model.soc_tes[hp, i]()
+                    dict_mpc_table[f"power_{hp}"][t_d] = int(round(model.p_hp[hp, i]()))
+                    dict_mpc_table[f"soc_{hp}"][t_d] = int(round(model.soc_tes[hp, i]()))
 
                 # Grid power
                 dict_mpc_table[f"power_{self.config_dict['id_meter_grid']}"][t_d] \
-                    = model.p_grid_out[i]() - model.p_grid_in[i]()
+                    = int(round(model.p_grid_out[i]() - model.p_grid_in[i]()))
 
             # Save results to file, which will be used as basis for controller_real_time set points and market trading
             self.mpc_table = pd.DataFrame.from_dict(dict_mpc_table)
@@ -1746,6 +1810,12 @@ class Prosumer:
             # Save results to file, which will be used as basis for controller_real_time set points and market trading
             self.mpc_table = pd.DataFrame.from_dict(dict_mpc_table)
 
+
+        if self.user_id == '0000000004':
+            print(self.user_id)
+            print(self.mpc_table.to_string())
+        exit()
+
         ft.write_dataframe(self.mpc_table.reset_index().rename(columns={"index": "timestamp"}),
                            f"{self.path}/controller_mpc.ft")
         # ft.write_dataframe(self.mpc_table.reset_index().rename(columns={"index": "timestamp"}),
@@ -1761,6 +1831,11 @@ class Prosumer:
         :return: None
         """
         self.mpc_table = ft.read_dataframe(f"{self.path}/fcasts_current.ft").set_index("timestamp")
+
+
+        if self.user_id == '0000000003':
+            print(self.user_id)
+            print(self.mpc_table.to_string())
 
         # if no plants, revert to simple rule-based controller
         if controller is None and len(self._get_list_plants()) - len(self._get_list_plants(plant_type="hh")) == 0:
@@ -2219,6 +2294,12 @@ class Prosumer:
             # Save results to file, which will be used as basis for controller_real_time set points and market trading
             self.mpc_table = pd.DataFrame.from_dict(dict_mpc_table)
 
+
+        if self.user_id == '0000000003':
+            print(self.user_id)
+            print(self.mpc_table.to_string())
+        exit()
+
         ft.write_dataframe(self.mpc_table.reset_index().rename(columns={"index": "timestamp"}),
                            f"{self.path}/controller_mpc.ft")
         ft.write_dataframe(self.mpc_table.reset_index().rename(columns={"index": "timestamp"}),
@@ -2456,6 +2537,11 @@ class Prosumer:
             [f"power_{self.config_dict['id_meter_grid']}"]) / 4
 
         df_potential_bids.rename(columns={f"power_{self.config_dict['id_meter_grid']}": "net_bids"}, inplace=True)
+
+        print(df_potential_bids.to_string())
+        print(len(df_potential_bids))
+        exit()
+
         df_potential_bids["net_bids"] = df_potential_bids["net_bids"] - self.matched_bids_by_timestep["net_bids"]
 
         dict_pot_bids = df_potential_bids.to_dict()
@@ -2522,10 +2608,16 @@ class Prosumer:
                     else:
                         price = round(self.config_dict["min_offer"] + delta, 6)
                         price *= euro_kwh_to_sigma_wh
+                price = int(price)
+
+                # TODO: Take back out again
+                if energy_position > 0:
+                    print(self.user_id)
+                    print(t_s, energy_position, price)
 
                 if post_position:
                     dict_positions[db_obj.db_param.ID_USER].append(self.config_dict['id_market_agent'])
-                    dict_positions[db_obj.db_param.QTY_ENERGY].append(abs(energy_position))
+                    dict_positions[db_obj.db_param.QTY_ENERGY].append(int(abs(energy_position)))
                     dict_positions[db_obj.db_param.TYPE_POSITION].append("offer" if energy_position > 0 else "bid")
                     dict_positions[db_obj.db_param.NUMBER_POSITION].append(0)
                     dict_positions[db_obj.db_param.STATUS_POSITION].append(0)
@@ -2537,6 +2629,11 @@ class Prosumer:
                 delta += gradient
         if clear_positions:
             db_obj.clear_positions(id_user=self.config_dict['id_market_agent'])
+
+        # TODO: Debugging
+        print(self.user_id)
+        print(dict_positions)
+
         if len(dict_positions[db_obj.db_param.ID_USER]) > 0:
             df_bids = pd.DataFrame(dict_positions)
             db_obj.post_positions(df_bids,

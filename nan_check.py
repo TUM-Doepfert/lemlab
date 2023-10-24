@@ -1,13 +1,14 @@
 import os
 import pandas as pd
+from tqdm import tqdm
 
-path = './scenarios'
+path = './scenarios/urban'
 
 folders = next(os.walk(path))[1]
 
 counter = 0
-
-for folder in folders:
+for folder in tqdm(folders, desc="Processing Scenarios", unit="scenario(s)"):
+# for folder in folders:
     agents_path = os.path.join(path, folder, 'prosumer')
     agents = next(os.walk(agents_path))[1]
     for agent in agents:
@@ -22,10 +23,13 @@ for folder in folders:
                 counter += 1
 
             # Interpolate NaN values for the DataFrame
-            df = df.interpolate(method='linear')
+            #df = df.interpolate(method='linear')
 
             # Use backward fill for the first row if there are still NaN values
-            df.iloc[0] = df.iloc[0].fillna(method='bfill')
+            #df.iloc[0] = df.iloc[0].fillna(method='bfill')
+
+            # Use backward fill for dataframe
+            df = df.fillna(method='bfill')
 
             # Check if NaN are still there
             if df.isnull().values.any():

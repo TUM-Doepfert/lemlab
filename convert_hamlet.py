@@ -6,8 +6,8 @@ import os
 from tqdm import tqdm
 
 
-def main(hamlet_scenario: str = './test',
-         lemlab_scenario: str = './scenarios'):
+def main(hamlet_scenario: str = './2_scenarios_hamlet/urban',
+         lemlab_scenario: str = './scenarios/urban'):
     # Get a list of all scenarios to simulate
     scenarios = next(os.walk(hamlet_scenario))[1]
 
@@ -24,10 +24,12 @@ def main(hamlet_scenario: str = './test',
         hamlet_path = os.path.join(hamlet_scenario, scenario)
         lemlab_path_wLEM = os.path.join(lemlab_scenario, f'{scenario}')
         lemlab_path_woLEM = os.path.join(lemlab_scenario, f'{scenario}_woLEM')
+        lemlab_path_woLEM_mpc = os.path.join(lemlab_scenario, f'{scenario}_woLEM_mpc')
 
         # Convert the scenario from hamlet to lemlab format once with LEM and once without LEM
         H2l(hamlet_path, lemlab_path_wLEM, lem=True, weather="weather.ft").convert()
         H2l(hamlet_path, lemlab_path_woLEM, lem=False, weather="weather.ft").convert()
+        H2l(hamlet_path, lemlab_path_woLEM_mpc, lem='mpc', weather="weather.ft").convert()
 
         # Update the progressbar
         pbar.update()

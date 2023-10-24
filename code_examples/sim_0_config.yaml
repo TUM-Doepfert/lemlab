@@ -181,7 +181,7 @@ prosumer:
 
   "mpc_horizon": 96                         # mpc horizon : 1 - ~180 -> how many delivery period into the future are to be considered
 
-  "mpc_price_fcast": "flat"                 # forecast model to be used for the lem market price
+  "mpc_price_fcast": "naive"                 # forecast model to be used for the lem market price
                                             #     "flat" - no meaningful forecasting, flat price curve
                                             #     "naive" - today will be identical to yesterday
 

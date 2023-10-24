@@ -15,6 +15,7 @@ import pandas as pd
 from bisect import bisect_left
 
 import pandas.errors
+from pprint import pprint
 
 # suppress tensorflow warnings because there are always some drivers for some graphics card missing.
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # or any {'0', '1', '2', '3'}
@@ -137,7 +138,7 @@ class ForecastManager:
                     if self.plant_dict[plant].get("type") in ["pv", "fixedgen"]:
                         # retrieve forecast for pv and fixed_gen plants, scale PU forecast by plant power
                         df_temp = self.__update_single_forecast(id_plant=plant).round().astype(int)
-                        # df_temp['power'] *= config_dict[plant]['power']  # not needed as not in pu anymore
+                        df_temp['power'] *= self.config_dict[plant]['power']  # not needed as not in pu anymore
                         # rename column and merge into forecast table
                         df_temp.rename(columns={'power': f'power_{plant}'}, inplace=True)
                         self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
@@ -168,6 +169,7 @@ class ForecastManager:
                     elif self.plant_dict[plant].get("type") == "hh":
                         # retrieve hh forecast and merge into forecast table
                         df_temp = self.__update_single_forecast(id_plant=plant)
+                        df_temp = round(df_temp, 0).astype(int)
                         df_temp.rename(columns={'power': f'power_{plant}'}, inplace=True)
                         self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
 
@@ -176,6 +178,10 @@ class ForecastManager:
                         # We create the columns for power and soc to be set by the controller later
                         self.fcast_table[f'power_{plant}'] = 0
                         self.fcast_table[f'soc_{plant}'] = 0
+
+                        # Make the columns integers
+                        self.fcast_table[f'power_{plant}'] = self.fcast_table[f'power_{plant}'].astype(int)
+                        self.fcast_table[f'soc_{plant}'] = self.fcast_table[f'soc_{plant}'].astype(int)
 
                     elif self.plant_dict[plant].get("type") == "ev":
                         # retrieve electric vehicle forecasts for availability

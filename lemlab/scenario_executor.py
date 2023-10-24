@@ -502,7 +502,7 @@ class ScenarioExecutor:
         self.db_conn_admin.register_user(pd.DataFrame().from_dict(dict_user))
 
     # simulation execution
-    def __execute_hamlet(self, show_pbar: bool = True):
+    def __execute_hamlet(self, show_pbar: bool = True, par_markets: bool = True):
         path_weather = f"{self.path_results}/weather/weather.ft"
         # choose execution mode: "real-time" or normal simulation
         if self.config["simulation"]["rts"] is True:
@@ -627,11 +627,14 @@ class ScenarioExecutor:
                     # 1: market clearing (if ex-ante market) and market settlement
                     if show_pbar:
                         pbar.set_description(f"{str_time}: {'Market clearing and settlement'.ljust(str_len)}")
-                    bids, offers = self.__step_lem_pre()  # previously in step_lem but moved here to allow for parallelization
-                    results = pool.map(_par_step,
-                                       self.__gen_par_step_lem_input(bids, offers))
-                    # print(results)
-                    self.__step_lem_post(results)  # previously in step_lem but moved here to allow for parallelization
+                    if par_markets:
+                        bids, offers = self.__step_lem_pre()  # previously in step_lem but moved here to allow for parallelization
+                        results = pool.map(_par_step,
+                                           self.__gen_par_step_lem_input(bids, offers))
+                        # print(results)
+                        self.__step_lem_post(results)  # previously in step_lem but moved here to allow for parallelization
+                    else:
+                        self.__step_lem()
                     # 2: prosumers check market results
                     if show_pbar:
                         pbar.set_description(f"{str_time}: {'Checking of market results'.ljust(str_len)}")

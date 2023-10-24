@@ -217,7 +217,7 @@ class Scenario:
         self.path_input_data = f"{self.config['simulation']['path_input_data']}"
 
         # Create scenario directory tree (if scenario exists, delete and recreate)
-        self.__create_folders([(f"{self.config['simulation']['path_scenarios']}", True),
+        self.__create_folders([(f"{self.config['simulation']['path_scenarios']}", False),
                                (f"{self.path_scenario}", True),
                                (f"{self.path_scenario}/lem", True),
                                (f"{self.path_scenario}/retailer", True),

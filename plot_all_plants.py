@@ -7,7 +7,7 @@ import os
 import json
 
 # Plant type to plot
-plant_type = 'pv'
+plant_type = 'hp'
 
 # Get all prosumers
 path = './prosumer'

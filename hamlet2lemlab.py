@@ -628,8 +628,8 @@ class H2l:
                     'sources': [f'general/weather/{weather}'],
                 },
             }
-        else:
-            # woLEM (no penalties on balancing as it is normal market)
+        elif not lem:
+            # woLEM and rtc (no penalties on balancing as it is normal market)
             self.naming = {
                 # Config is structured the following way:
                 # 1. level: source files and parameters
@@ -775,9 +775,9 @@ class H2l:
                                     'func': None,
                                 },
                                 'mpc_price_fcast': {
-                                    'src': 'price_fcast',
+                                    'src': None,
                                     'type': str,
-                                    'func': None,
+                                    'func': 'flat',
                                 },
                                 'mpc_price_fcast_retraining_period': {
                                     'src': None,
@@ -1221,6 +1221,601 @@ class H2l:
                     'sources': [f'general/weather/{weather}'],
                 },
             }
+        elif 'mpc':
+            # woLEM and mpc (no penalties on balancing as it is normal market)
+            self.naming = {
+                # Config is structured the following way:
+                # 1. level: source files and parameters
+                # 2. level: parameter categories in lemlab
+                # 3. level: parameter subcategories in lemlab
+                # 4. level: parameter names in lemlab
+                # 5. level: parameter values in lemlab (either set value or a list with set of instructions
+                #           [source file index, path to find it in HAMLET, function to call]
+                'config': {
+                    'sources': ['config/config_general.yaml', 'config/config_markets.yaml'],
+                    'params': {
+                        'simulation': {
+                            'rts': False,
+                            'lem_active': True,
+                            'agents_active': True,
+                            'rts_start_steps': 6,
+                            'sim_start': [0, ['simulation', 'sim', 'start'], self.__config_sim_start],
+                            'sim_start_tz': 'europe/berlin',
+                            'sim_length': 9, # [0, ['simulation', 'sim', 'duration'], self.__get_value],
+                            'path_input_data': '../input_data',
+                            'path_scenarios': '../scenarios',
+                        },
+                        'lem': {
+                            'types_clearing_ex_ante': {0: 'pda'},
+                            'types_clearing_ex_post': {0: "community"},
+                            'types_pricing_ex_ante': {0: 'uniform'},
+                            'types_pricing_ex_post': {0: "standard"},
+                            'share_quality_logging_extended': True,
+                            'types_quality': {0: 'na',
+                                              1: 'local',
+                                              2: 'green_local'},
+                            'types_position': {0: 'offer',
+                                               1: 'bid'},
+                            'types_transaction': {0: 'market',
+                                                  1: 'balancing',
+                                                  2: 'levy_prices'},
+                            'positions_delete': True,
+                            'positions_archive': True,
+                            'horizon_clearing': 86400,
+                            'interval_clearing': 900,
+                            'frequency_clearing': 900,
+                            'calculate_virtual_submeters': True,
+                            'prices_settlement_in_advance': 0,
+                            'types_meter': {0: 'plant submeter',
+                                            1: 'virtual plant submeter',
+                                            2: 'dividing meter',
+                                            3: 'virtual dividing meter',
+                                            4: 'grid meter',
+                                            5: 'virtual grid meter'},
+                            'bal_energy_pricing_mechanism': [1, [self.market, 'pricing', 'retailer', 'balancing', 'method'],
+                                                             self.__get_value],
+                            'path_bal_prices': [1, [self.market, 'pricing', 'retailer', 'balancing', 'file', 'file'],
+                                                self.__get_value],
+                            'price_energy_balancing_positive': -0.0827,  # -1 of feed-in tariff   # [1,
+                                                                # [self.market, 'pricing', 'retailer', 'balancing', 'fixed',
+                                                                #  'price'], [0], self.__get_value_list],
+                            'price_energy_balancing_negative': 0.147,  # +1 of grid energy  # [1,
+                                                                # [self.market, 'pricing', 'retailer', 'balancing', 'fixed',
+                                                                #  'price'], [1], self.__get_value_list],
+                            'levy_pricing_mechanism': [1, [self.market, 'pricing', 'retailer', 'levies', 'method'],
+                                                       self.__get_value],
+                            'path_levy_prices': [1, [self.market, 'pricing', 'retailer', 'levies', 'file', 'file'],
+                                                 self.__get_value],
+                            'price_energy_levies_positive': 0,  # [1, [self.market, 'pricing', 'retailer', 'levies', 'fixed',
+                                                                # 'price'], [0], self.__get_value_list],
+                            'price_energy_levies_negative': 0.2297  # [1, [self.market, 'pricing', 'retailer', 'levies', 'fixed',
+                                                                 # 'price'], [1], self.__get_value_list],
+                        },
+                        'retailer': {
+                            'retail_pricing_mechanism': [1, [self.market, 'pricing', 'retailer', 'energy', 'method'],
+                                                         self.__get_value],
+                            'path_retail_prices': [1, [self.market, 'pricing', 'retailer', 'energy', 'file', 'file'],
+                                                   self.__get_value],
+                            'price_sell': 0.147,  # [1, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'price'], [1],
+                                           # self.__get_value_list],
+                            'price_buy': 0.0827,  # [1, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'price'], [0],
+                                          # self.__get_value_list],
+                            'qty_energy_bid': 1_000_000_000,  # [1, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'quantity'], [1],
+                                               # self.__get_value_list],
+                            'qty_energy_offer': 1_000_000_000,  # [1, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'quantity'],
+                                                 # [0], self.__get_value_list],
+                            'quality': 'na',
+                            'id_user': 'retailer01',
+                        },
+                        'aggregator': {
+                            'active': False,
+                        },
+                        'db_connections': {
+                            'database_connection_admin': {
+                                'user': [0, ['database', 'admin', 'user'], self.__get_value],
+                                'pw': [0, ['database', 'admin', 'pw'], self.__get_value],
+                                'host': [0, ['database', 'admin', 'host'], self.__get_value],
+                                'port': [0, ['database', 'admin', 'port'], self.__get_value],
+                                'db': [0, ['database', 'admin', 'db'], self.__get_value],
+                            },
+                            'database_connection_user': {
+                                'user': [0, ['database', 'user', 'user'], self.__get_value],
+                                'pw': [0, ['database', 'user', 'pw'], self.__get_value],
+                                'host': [0, ['database', 'user', 'host'], self.__get_value],
+                                'port': [0, ['database', 'user', 'port'], self.__get_value],
+                                'db': [0, ['database', 'user', 'db'], self.__get_value],
+                            },
+                        },
+                    },
+                },
+                # Agent is structured the following way:
+                # 1. level: agent type (e.g. 'sfh', 'mfh')
+                # 2. level: agent files in HAMLET
+                'agents': {
+                    'type': ['sfh'],
+                    'sfh': {
+                        # 3. level: agent parameter categories in HAMLET
+                        # 4. level: agent parameter names in lemlab
+                        # 5. level: instructions on how to convert HAMLET to lemlab values (name: name in HAMLET, type: type
+                        #   of value, func: function to convert value but can also be used as value if no name is provided)
+                        'account.json': {
+                            'general': {
+                                'id_user': {
+                                    'src': 'agent_id',
+                                    'type': str,
+                                    'func': self._conv_idx,
+                                },
+                                'id_market_agent': {
+                                    'src': 'agent_id',
+                                    'type': str,
+                                    'func': self._conv_idx,
+                                },
+                                'id_user_old': {
+                                    'src': 'agent_id',
+                                    'type': str,
+                                    'func': None,
+                                },
+                                'solver': {
+                                    'src': None,
+                                    'type': str,
+                                    'func': 'gurobi',
+                                },
+                            },
+                            'mpc': {
+                                'mpc_horizon': {
+                                    'src': 'horizon',
+                                    'type': int,
+                                    'func': None,
+                                },
+                                'mpc_price_fcast': {
+                                    'src': None,
+                                    'type': str,
+                                    'func': 'flast',
+                                },
+                                'mpc_price_fcast_retraining_period': {
+                                    'src': None,
+                                    'type': int,
+                                    'func': 86400,
+                                },
+                                'mpc_price_fcast_update_period': {
+                                    'src': None,
+                                    'type': int,
+                                    'func': 900,
+                                },
+                                'controller_strategy': {
+                                    'src': None,
+                                    'type': str,
+                                    'func': 'mpc_opt',  # TODO: This is the only difference between woLEM and woLEM-mpc
+                                },
+                            },
+                            'market_agent': {
+                                'ma_horizon': {
+                                    'src': 'horizon',
+                                    'type': int,
+                                    'func': None,
+                                },
+                                'ma_strategy': {
+                                    'src': 'strategy',
+                                    'type': str,
+                                    'func': None,
+                                },
+                                'ma_preference_quality': {
+                                    'src': 'preference_quality',
+                                    'type': str,
+                                    'func': None,
+                                },
+                                'ma_premium_preference_quality': {
+                                    'src': 'premium_preference_quality',
+                                    'type': int,
+                                    'func': None,
+                                },
+                            },
+                            'meter': {
+                                'meter_prob_late': {
+                                    'src': 'prob_late',
+                                    'type': int,
+                                    'func': None,
+                                },
+                                'meter_prob_late_95': {
+                                    'src': 'prob_late_95',
+                                    'type': int,
+                                    'func': None,
+                                },
+                                'meter_prob_missing': {
+                                    'src': 'prob_missing',
+                                    'type': int,
+                                    'func': None,
+                                },
+                            },
+                            'plants': {
+                                'list_plants': {
+                                    'src': 'plants',
+                                    'type': None,
+                                    'func': None,
+                                },
+                                'id_meter_grid': {
+                                    'src': None,
+                                    'type': str,
+                                    'func': self._create_main_meter,
+                                },
+                            },
+                        },
+                        'plants.json': {
+                            'hh': {
+                                'src': 'inflexible_load',
+                                'params': {
+                                    'type': {
+                                        'src': None,
+                                        'type': str,
+                                        'func': 'hh',
+                                    },
+                                    'activated': {
+                                        'src': None,
+                                        'type': None,
+                                        'func': True,
+                                    },
+                                    'has_submeter': {
+                                        'src': None,
+                                        'type': None,
+                                        'func': True,
+                                    },
+                                    'fcast': {
+                                        'src': ['fcast', 'method'],
+                                        'type': str,
+                                        'func': None,
+                                    },
+                                    'fcast_order': {
+                                        'src': ['fcast', 'sarma_order'],
+                                        'type': None,
+                                        'func': None,
+                                    },
+                                    'fcast_retraining_period': {
+                                        'src': None,
+                                        'type': int,
+                                        'func': FCAST_RETRAINING_PERIOD,
+                                    },
+                                    'fcast_update_period': {
+                                        'src': None,
+                                        'type': int,
+                                        'func': FCAST_UPDATE_PERIOD,
+                                    },
+                                    'annual_consumption': {
+                                        'src': 'demand',
+                                        'type': int,
+                                        'func': self._divide_by_1000,
+                                    },
+                                },
+                            },
+                            'pv': {
+                                'src': 'pv',
+                                'params': {
+                                    'type': {
+                                        'src': 'type',
+                                        'type': str,
+                                        'func': None,
+                                    },
+                                    'activated': {
+                                        'src': None,
+                                        'type': None,
+                                        'func': True,
+                                    },
+                                    'has_submeter': {
+                                        'src': None,
+                                        'type': None,
+                                        'func': True,
+                                    },
+                                    'power': {
+                                        'src': 'power',
+                                        'type': int,
+                                        'func': None,
+                                    },
+                                    'controllable': {
+                                        'src': 'controllable',
+                                        'type': bool,
+                                        'func': None,
+                                    },
+                                    'fcast': {
+                                        'src': ['fcast', 'method'],
+                                        'type': str,
+                                        'func': None,
+                                    },
+                                    'fcast_order': {
+                                        'src': None,
+                                        'type': None,
+                                        'func': [],
+                                    },
+                                    'fcast_param': {
+                                        'src': ['fcast', 'smoothed_timesteps'],
+                                        'type': None,
+                                        'func': None,
+                                    },
+                                    'fcast_retraining_period': {
+                                        'src': None,
+                                        'type': int,
+                                        'func': FCAST_RETRAINING_PERIOD,
+                                    },
+                                    'fcast_update_period': {
+                                        'src': None,
+                                        'type': int,
+                                        'func': FCAST_UPDATE_PERIOD,
+                                    },
+                                    'quality': {
+                                        'src': 'quality',
+                                        'type': str,
+                                        'func': None,
+                                    },
+                                },
+                            },
+                            'ev': {
+                                'src': 'ev',
+                                'params': {
+                                    'type': {
+                                        'src': 'type',
+                                        'type': str,
+                                        'func': None,
+                                    },
+                                    'activated': {
+                                        'src': None,
+                                        'type': bool,
+                                        'func': True,
+                                    },
+                                    'has_submeter': {
+                                        'src': None,
+                                        'type': bool,
+                                        'func': True,
+                                    },
+                                    'efficiency': {
+                                        'src': None,  # originally: 'charging_efficiency'
+                                        'type': float,
+                                        'func': 1,  # in accordance with Soner
+                                    },
+                                    'v2g': {
+                                        'src': 'v2g',
+                                        'type': bool,
+                                        'func': None,
+                                    },
+                                    'charging_power': {
+                                        'src': 'charging_home',
+                                        'type': int,
+                                        'func': None,
+                                    },
+                                    'capacity': {
+                                        'src': 'capacity',
+                                        'type': int,
+                                        'func': None,
+                                    },
+                                    'consumption': {
+                                        'src': 'consumption',
+                                        'type': int,
+                                        'func': None,
+                                    },
+                                    'fcast': {
+                                        'src': None,  # originally: ['fcast', 'method']
+                                        'type': str,
+                                        'func': 'ev_close',
+                                    },
+                                    'fcast_order': {
+                                        'src': None,
+                                        'type': None,
+                                        'func': [],
+                                    },
+                                    'fcast_param': {
+                                        'src': None,
+                                        'type': None,
+                                        'func': [],
+                                    },
+                                    'fcast_retraining_period': {
+                                        'src': None,
+                                        'type': int,
+                                        'func': FCAST_RETRAINING_PERIOD,
+                                    },
+                                    'fcast_update_period': {
+                                        'src': None,
+                                        'type': int,
+                                        'func': FCAST_UPDATE_PERIOD,
+                                    },
+                                    'quality': {
+                                        'src': ['fcast', 'quality'],
+                                        'type': str,
+                                        'func': None,
+                                    },
+                                },
+                            },
+                            'bat': {
+                                'src': 'battery',
+                                'params': {
+                                    'type': {
+                                        'src': None,
+                                        'type': str,
+                                        'func': 'bat',
+                                    },
+                                    'activated': {
+                                        'src': None,
+                                        'type': bool,
+                                        'func': True,
+                                    },
+                                    'has_submeter': {
+                                        'src': None,
+                                        'type': bool,
+                                        'func': True,
+                                    },
+                                    'power': {
+                                        'src': 'power',
+                                        'type': int,
+                                        'func': None,
+                                    },
+                                    'capacity': {
+                                        'src': 'capacity',
+                                        'type': int,
+                                        'func': None,
+                                    },
+                                    'efficiency': {
+                                        'src': None,  # originally: 'efficiency'
+                                        'type': float,
+                                        'func': 0.95,  # in accordance with Soner
+                                    },
+                                    'charge_from_grid': {
+                                        'src': None,  # originally: 'g2b'
+                                        'type': bool,
+                                        'func': False,
+                                    },
+                                    'quality': {
+                                        'src': 'quality',
+                                        'type': str,
+                                        'func': None,
+                                    },
+                                },
+                            },
+                            'hp': {
+                                'src': 'hp',
+                                'params': {
+                                    'type': {
+                                        'src': 'type',
+                                        'type': str,
+                                        'func': None,
+                                    },
+                                    'activated': {
+                                        'src': None,
+                                        'type': bool,
+                                        'func': True,
+                                    },
+                                    'has_submeter': {
+                                        'src': None,
+                                        'type': bool,
+                                        'func': True,
+                                    },
+                                    'power': {
+                                        'src': 'power',
+                                        'type': int,
+                                        'func': None,
+                                    },
+                                    'hp_type': {
+                                        'src': None,
+                                        'type': str,
+                                        'func': 'Outdoor Air/Water',
+                                    },
+                                    'temperature': {
+                                        'src': None,
+                                        'type': int,
+                                        'func': 55,
+                                    },
+                                    'capacity': {
+                                        'src': None,
+                                        'type': int,
+                                        'func': self._get_storage_value,
+                                    },
+                                    'efficiency': {
+                                        'src': None,
+                                        'type': float,
+                                        'func': self._get_storage_value,
+                                    },
+                                    'fcast': {
+                                        'src': None,
+                                        'type': str,
+                                        'func': self._get_heat_fcast,
+                                    },
+                                    'fcast_order': {
+                                        'src': None,
+                                        'type': None,
+                                        'func': [],
+                                    },
+                                    'fcast_retraining_period': {
+                                        'src': None,
+                                        'type': int,
+                                        'func': FCAST_RETRAINING_PERIOD,
+                                    },
+                                    'fcast_update_period': {
+                                        'src': None,
+                                        'type': int,
+                                        'func': FCAST_UPDATE_PERIOD,
+                                    },
+                                },
+                            },
+                        },
+                        # 3. level: call function to convert each column into a separate meter file
+                        'meters.ft': self._split_meter,
+                        'socs.ft': self._split_soc,
+                        'timeseries.ft': self._split_timeseries,
+                    },
+                },
+                # Market is structured the following way (check that identical with config):
+                # 1. level: source files and parameters
+                # 2. level: parameter names in lemlab
+                'market': {
+                    'sources': ['config/config_markets.yaml'],
+                    'params': {
+                            'types_clearing_ex_ante': {0: 'pda'},
+                            'types_clearing_ex_post': {0: 'community'},
+                            'types_pricing_ex_ante': {0: 'uniform',
+                                                      1: 'discriminatory'},
+                            'types_pricing_ex_post': {0: 'standard'},
+                            'share_quality_logging_extended': True,
+                            'types_quality': {0: 'na',
+                                              1: 'local',
+                                              2: 'green_local'},
+                            'types_position': {0: 'offer',
+                                               1: 'bid'},
+                            'types_transaction': {0: 'market',
+                                                  1: 'balancing',
+                                                  2: 'levy_prices'},
+                            'positions_delete': True,
+                            'positions_archive': True,
+                            'horizon_clearing': 86400,
+                            'interval_clearing': 900,
+                            'frequency_clearing': 900,
+                            'calculate_virtual_submeters': True,
+                            'prices_settlement_in_advance': 0,
+                            'types_meter': {0: 'plant submeter',
+                                            1: 'virtual plant submeter',
+                                            2: 'dividing meter',
+                                            3: 'virtual dividing meter',
+                                            4: 'grid meter',
+                                            5: 'virtual grid meter'},
+                            'bal_energy_pricing_mechanism': [0, [self.market, 'pricing', 'retailer', 'balancing', 'method'],
+                                                             self.__get_value],
+                            'path_bal_prices': [0, [self.market, 'pricing', 'retailer', 'balancing', 'file', 'file'],
+                                                self.__get_value],
+                            'price_energy_balancing_positive': -0.0827,  # -1 of feed-in tariff   # [1,
+                                                                # [self.market, 'pricing', 'retailer', 'balancing', 'fixed',
+                                                                #  'price'], [0], self.__get_value_list],
+                            'price_energy_balancing_negative': 0.147,  # +1 of grid energy  # [1,
+                                                                # [self.market, 'pricing', 'retailer', 'balancing', 'fixed',
+                                                                #  'price'], [1], self.__get_value_list],
+                            'levy_pricing_mechanism': [0, [self.market, 'pricing', 'retailer', 'levies', 'method'],
+                                                       self.__get_value],
+                            'path_levy_prices': [0, [self.market, 'pricing', 'retailer', 'levies', 'file', 'file'],
+                                                 self.__get_value],
+                            'price_energy_levies_positive': 0,  # [1, [self.market, 'pricing', 'retailer', 'levies', 'fixed',
+                                                                # 'price'], [0], self.__get_value_list],
+                            'price_energy_levies_negative': 0.2297  # [1, [self.market, 'pricing', 'retailer', 'levies', 'fixed',
+                                                                 # 'price'], [1], self.__get_value_list],
+                        },
+                },
+                'retailer': {
+                    'sources': ['config/config_markets.yaml', 'general/retailer.ft'],
+                    'params': {
+                            'retail_pricing_mechanism': [0, [self.market, 'pricing', 'retailer', 'energy', 'method'],
+                                                         self.__get_value],
+                            'path_retail_prices': [0, [self.market, 'pricing', 'retailer', 'energy', 'file', 'file'],
+                                                   self.__get_value],
+                            'price_sell': 0.147,  # [1, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'price'], [1],
+                                           # self.__get_value_list],
+                            'price_buy': 0.0827,  # [1, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'price'], [0],
+                                          # self.__get_value_list],
+                            'qty_energy_bid': 1_000_000_000,  # [1, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'quantity'], [1],
+                                               # self.__get_value_list],
+                            'qty_energy_offer': 1_000_000_000,  # [1, [self.market, 'pricing', 'retailer', 'energy', 'fixed', 'quantity'],
+                                                 # [0], self.__get_value_list],
+                            'quality': 'na',
+                            'id_user': 'retailer01',
+                        },
+                },
+                'weather': {
+                    'sources': [f'general/weather/{weather}'],
+                },
+            }
+        else:
+            raise NotImplementedError
 
     def convert(self):
 
