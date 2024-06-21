@@ -1,0 +1,25 @@
+2024-01-12 15:38:37 ERROR: Error in Countryside_pv_0.0_hp_0.0_ev_0.0_summer_wLEM_mpc_naive: local variable 'df_market' referenced before assignment
+2024-01-12 15:58:38 ERROR: Error in Countryside_pv_0.0_hp_0.25_ev_0.0_summer_wLEM_mpc_naive: Error tokenizing data. C error: Calling read(nbytes) on source failed. Try engine='python'.
+2024-01-19 08:42:46 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: False
+2024-01-19 08:42:59 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: False
+2024-01-19 08:44:03 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: Boolean index has wrong length: 1 instead of 5
+2024-01-19 08:44:11 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: False
+2024-01-19 08:44:22 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: False
+2024-01-19 08:44:28 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: False
+2024-01-19 11:08:34 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: 'qty_energy_sum'
+2024-01-19 11:45:28 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: 'qty_energy_sum'
+2024-01-19 11:55:02 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: "None of [Index([(False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, ...), (False, False, False, False, False, False, False, False, False, False, False, False, False, True, False, False, False, False, False, True, False, False, False, False, False, False, False, False, True, False, False, True, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, True, False, False, True, False, False, True, False, False, False, False, False, False, False, False, False, True, False, False, True, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, True, False, False, False, False, False, False, True, False, False, False, True, False, False, False, ...)], dtype='object')] are in the [index]"
+2024-01-19 11:57:56 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: Cannot convert non-finite values (NA or inf) to integer
+2024-01-19 11:58:32 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: Cannot convert non-finite values (NA or inf) to integer
+2024-01-19 12:39:53 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: Can only compare identically-labeled Series objects
+2024-01-19 12:41:01 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: Can only compare identically-labeled Series objects
+2024-01-19 12:42:57 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: 'id_meter'
+2024-01-19 12:46:21 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: Unalignable boolean Series provided as indexer (index of the boolean Series and of the indexed object do not match).
+2024-01-19 12:46:49 ERROR: Error in Suburban_pv_1.0_hp_0.0_ev_0.25_summer_wLEM_mpc_naive: 'id_meter'
+2024-01-19 13:11:25 ERROR: Error in Suburban_pv_0.5_hp_1.0_ev_0.25_summer_woLEM_mpc_naive: Error tokenizing data. C error: Calling read(nbytes) on source failed. Try engine='python'.
+2024-01-19 13:23:52 ERROR: Error in Countryside_pv_0.0_hp_0.0_ev_0.75_winter_wLEM_mpc_naive: Error tokenizing data. C error: Calling read(nbytes) on source failed. Try engine='python'.
+2024-01-19 13:26:16 ERROR: Error in Countryside_pv_0.0_hp_0.0_ev_0.0_summer_woLEM_rtc_naive: 'balancing'
+2024-01-19 13:39:16 ERROR: Error in Countryside_pv_0.0_hp_0.0_ev_0.0_summer_woLEM_rtc_naive: 'balancing'
+2024-01-19 13:46:35 ERROR: Error in Countryside_pv_0.0_hp_0.0_ev_0.0_summer_woLEM_rtc_naive: 'balancing'
+2024-01-19 13:55:51 ERROR: Error in Countryside_pv_0.0_hp_0.0_ev_0.0_summer_woLEM_rtc_naive: 'balancing'
+2024-01-19 13:59:53 ERROR: Error in Countryside_pv_0.0_hp_0.0_ev_0.0_summer_woLEM_rtc_naive: 

@@ -1,0 +1,15 @@
+\ Model objective_fun_copy
+\ LP format - for model browsing. Use MPS format to capture full model detail.
+Minimize
+ 
+Subject To
+ c_l_con_hp_p(P2ASy5Q04bp7yAG)_: p_hp(P2ASy5Q04bp7yAG) >= -7600
+ c_e_con_hp_q(P2ASy5Q04bp7yAG)_: 2.98 p_hp(P2ASy5Q04bp7yAG)
+   + q_hp(P2ASy5Q04bp7yAG) = 0
+ c_e_con_heat_balance_: q_hp(P2ASy5Q04bp7yAG) + q_tes_out(P2ASy5Q04bp7yAG)
+   - q_tes_in(P2ASy5Q04bp7yAG) = 36733
+Bounds
+ p_hp(P2ASy5Q04bp7yAG) free
+ q_hp(P2ASy5Q04bp7yAG) free
+ -infinity <= q_tes_out(P2ASy5Q04bp7yAG) <= 7600
+End

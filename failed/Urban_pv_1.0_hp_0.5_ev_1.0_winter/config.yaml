@@ -1,0 +1,77 @@
+simulation:
+  rts: false
+  lem_active: true
+  agents_active: true
+  rts_start_steps: 6
+  sim_start: '2019-11-11 00:00:00'
+  sim_start_tz: europe/berlin
+  sim_length: 9
+  path_input_data: ../input_data
+  path_scenarios: ../scenarios
+lem:
+  types_clearing_ex_ante:
+    0: pda
+  types_clearing_ex_post:
+    0: community
+  types_pricing_ex_ante:
+    0: uniform
+  types_pricing_ex_post:
+    0: standard
+  share_quality_logging_extended: true
+  types_quality:
+    0: na
+    1: local
+    2: green_local
+  types_position:
+    0: offer
+    1: bid
+  types_transaction:
+    0: market
+    1: balancing
+    2: levy_prices
+  positions_delete: true
+  positions_archive: true
+  horizon_clearing: 86400
+  interval_clearing: 900
+  frequency_clearing: 900
+  calculate_virtual_submeters: true
+  prices_settlement_in_advance: 0
+  types_meter:
+    0: plant submeter
+    1: virtual plant submeter
+    2: dividing meter
+    3: virtual dividing meter
+    4: grid meter
+    5: virtual grid meter
+  bal_energy_pricing_mechanism: fixed
+  path_bal_prices: balancing_1.csv
+  price_energy_balancing_positive: -0.0727
+  price_energy_balancing_negative: 0.157
+  levy_pricing_mechanism: fixed
+  path_levy_prices: levies_1.csv
+  price_energy_levies_positive: 0
+  price_energy_levies_negative: 0.2297
+retailer:
+  retail_pricing_mechanism: fixed
+  path_retail_prices: lem_continuous_energy.csv
+  price_sell: 0.147
+  price_buy: 0.0827
+  qty_energy_bid: 1000000000
+  qty_energy_offer: 1000000000
+  quality: na
+  id_user: retailer01
+aggregator:
+  active: false
+db_connections:
+  database_connection_admin:
+    user: admin_lem
+    pw: admin
+    host: 127.0.0.1
+    port: '5432'
+    db: postgres
+  database_connection_user:
+    user: market_participant
+    pw: user
+    host: 127.0.0.1
+    port: '5432'
+    db: postgres

@@ -1,0 +1,18 @@
+\ Model objective_fun_copy
+\ LP format - for model browsing. Use MPS format to capture full model detail.
+Minimize
+ 
+Subject To
+ c_l_con_hp_p(845CQgIhpdTAXGO)_: p_hp(845CQgIhpdTAXGO) >= -14000
+ c_e_con_hp_q(845CQgIhpdTAXGO)_: 3.73 p_hp(845CQgIhpdTAXGO)
+   + q_hp(845CQgIhpdTAXGO) = 0
+ c_l_tes_soc_2(845CQgIhpdTAXGO)_:
+   - 0.2777777777777778 q_tes_out(845CQgIhpdTAXGO)
+   + 0.225 q_tes_in(845CQgIhpdTAXGO) >= 1.27329e-11
+ c_e_con_heat_balance_: q_hp(845CQgIhpdTAXGO) + q_tes_out(845CQgIhpdTAXGO)
+   - q_tes_in(845CQgIhpdTAXGO) = 52790
+Bounds
+ p_hp(845CQgIhpdTAXGO) free
+ q_hp(845CQgIhpdTAXGO) free
+ q_tes_out(845CQgIhpdTAXGO) free
+End

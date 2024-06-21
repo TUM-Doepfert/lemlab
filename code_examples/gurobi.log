@@ -1,0 +1,131 @@
+
+Gurobi 10.0.1 (win64, Python) logging started Fri Oct 27 07:36:27 2023
+
+Set parameter Username
+Set parameter LogFile to value "gurobi.log"
+Academic license - for non-commercial use only - expires 2024-06-06
+Read LP format model from file datei_rtc_error_0000000009.lp
+Reading time = 0.00 seconds
+objective_fun: 29 rows, 25 columns, 71 nonzeros
+IIS computation: initial model status unknown, solving to determine model status
+Presolve removed 11 rows and 6 columns
+Presolve time: 0.00s
+
+Explored 0 nodes (0 simplex iterations) in 0.00 seconds (0.00 work units)
+Thread count was 1 (of 16 available processors)
+
+Solution count 0
+
+Model is infeasible
+Best objective -, best bound -, gap -
+
+Computing Irreducible Inconsistent Subsystem (IIS)...
+
+           Constraints          |            Bounds           |  Runtime
+      Min       Max     Guess   |   Min       Max     Guess   |
+--------------------------------------------------------------------------
+        0        29         -         0        27         -           0s
+        3         3         3         2         2         2           0s
+
+IIS computed: 3 constraints, 2 bounds
+IIS runtime: 0.01 seconds (0.00 work units)
+Read LP format model from file datei_rtc_error_0000000003.lp
+Reading time = 0.00 seconds
+objective_fun: 22 rows, 22 columns, 55 nonzeros
+IIS computation: initial model status unknown, solving to determine model status
+Presolve removed 15 rows and 13 columns
+Presolve time: 0.00s
+
+Explored 0 nodes (0 simplex iterations) in 0.00 seconds (0.00 work units)
+Thread count was 1 (of 16 available processors)
+
+Solution count 0
+
+Model is infeasible
+Best objective -, best bound -, gap -
+
+Computing Irreducible Inconsistent Subsystem (IIS)...
+
+           Constraints          |            Bounds           |  Runtime
+      Min       Max     Guess   |   Min       Max     Guess   |
+--------------------------------------------------------------------------
+        0        22         -         0        26         -           0s
+        4         4         4         1         1         1           0s
+
+IIS computed: 4 constraints, 1 bounds
+IIS runtime: 0.01 seconds (0.00 work units)
+Read LP format model from file datei_rtc_error_0000000009.lp
+Reading time = 0.00 seconds
+objective_fun: 29 rows, 25 columns, 71 nonzeros
+IIS computation: initial model status unknown, solving to determine model status
+Presolve removed 11 rows and 6 columns
+Presolve time: 0.00s
+
+Explored 0 nodes (0 simplex iterations) in 0.00 seconds (0.00 work units)
+Thread count was 1 (of 16 available processors)
+
+Solution count 0
+
+Model is infeasible
+Best objective -, best bound -, gap -
+
+Computing Irreducible Inconsistent Subsystem (IIS)...
+
+           Constraints          |            Bounds           |  Runtime
+      Min       Max     Guess   |   Min       Max     Guess   |
+--------------------------------------------------------------------------
+        0        29         -         0        27         -           0s
+        3         3         3         2         2         2           0s
+
+IIS computed: 3 constraints, 2 bounds
+IIS runtime: 0.01 seconds (0.00 work units)
+Read LP format model from file datei_rtc_error_0000000003.lp
+Reading time = 0.00 seconds
+objective_fun: 22 rows, 22 columns, 55 nonzeros
+IIS computation: initial model status unknown, solving to determine model status
+Presolve removed 15 rows and 13 columns
+Presolve time: 0.00s
+
+Explored 0 nodes (0 simplex iterations) in 0.00 seconds (0.00 work units)
+Thread count was 1 (of 16 available processors)
+
+Solution count 0
+
+Model is infeasible
+Best objective -, best bound -, gap -
+
+Computing Irreducible Inconsistent Subsystem (IIS)...
+
+           Constraints          |            Bounds           |  Runtime
+      Min       Max     Guess   |   Min       Max     Guess   |
+--------------------------------------------------------------------------
+        0        22         -         0        26         -           0s
+        4         4         4         1         1         1           0s
+
+IIS computed: 4 constraints, 1 bounds
+IIS runtime: 0.01 seconds (0.00 work units)
+Read LP format model from file datei_rtc_error_0000000004.lp
+Reading time = 0.00 seconds
+objective_fun: 23 rows, 20 columns, 56 nonzeros
+IIS computation: initial model status unknown, solving to determine model status
+Presolve removed 16 rows and 12 columns
+Presolve time: 0.00s
+
+Explored 0 nodes (0 simplex iterations) in 0.00 seconds (0.00 work units)
+Thread count was 1 (of 16 available processors)
+
+Solution count 0
+
+Model is infeasible
+Best objective -, best bound -, gap -
+
+Computing Irreducible Inconsistent Subsystem (IIS)...
+
+           Constraints          |            Bounds           |  Runtime
+      Min       Max     Guess   |   Min       Max     Guess   |
+--------------------------------------------------------------------------
+        0        23         -         0        22         -           0s
+        4         4         4         1         1         1           0s
+
+IIS computed: 4 constraints, 1 bounds
+IIS runtime: 0.01 seconds (0.00 work units)
