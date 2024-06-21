@@ -92,7 +92,7 @@ class Prosumer:
         # df containing net matched market volumes by timestep (multiple matched offers for each timestamp summated)
         self.matched_bids_by_timestep = None
 
-    def pre_clearing_activity(self, db_obj, clear_positions=False, urbs: bool = False):
+    def pre_clearing_activity(self, db_obj, clear_positions=False, urbs: bool = True):
         self.update_user_preferences(db_obj)
         if urbs:
             self.controller_real_time_urbs()
@@ -167,7 +167,7 @@ class Prosumer:
             #    return _model.p_pv[_plant] <= p_max
             #else:
             #    return _model.p_pv[_plant] == p_max
-            # Ensure that power output is always maximum power
+            # TODO: Ensure that power output is always maximum power
             return _model.p_pv[_plant] == p_max
 
         if self._get_list_plants(plant_type="pv"):
@@ -218,7 +218,7 @@ class Prosumer:
             rtc_model.con_fixedgen = pyo.Constraint(self._get_list_plants(plant_type="fixedgen"),
                                                     rule=fixedgen_rule)
 
-    def add_c_hp_rtc_urbs(self, rtc_model):
+    def add_c_hp_rtc_urbs(self, rtc_model, factor: float=1):
         # hp variables
         rtc_model.p_hp = pyo.Var(self._get_list_plants(plant_type="hp"),
                                  domain=pyo.NonPositiveReals)
@@ -233,7 +233,7 @@ class Prosumer:
             # load heat pump parameters
             df_hp = pd.read_feather(f"{self.path}/raw_data_{_plant}.ft").set_index('timestamp')
             hp_sim_res = {
-                'P_el': df_hp.at[self.ts_delivery_prev, "heat"] / df_hp.at[self.ts_delivery_prev, "cop"],  # negative
+                'P_el': -self.plant_dict[_plant]['power'] * factor,  # negative as it draws the power
                 'COP': df_hp.at[self.ts_delivery_prev, "cop"],
             }
             res_hp_dict[_plant] = hp_sim_res
@@ -271,10 +271,15 @@ class Prosumer:
             with open(f"{self.path}/soc_{hp}.json", "r") as read_file:
                 dict_soc_old[hp] = json.load(read_file)
             dict_capacity_wh[hp] = self.plant_dict[hp]['capacity']
-            dict_power_th[hp] = self.plant_dict[hp]['power']  # * 5  multiply if problem cannot converge
+            dict_power_th[hp] = self.plant_dict[hp]['power']
             rtc_model.n_tes[hp] = self.plant_dict[hp]["efficiency"]
-            rtc_model.q_tes_in[hp].setub(float(dict_power_th[hp]))
-            rtc_model.q_tes_out[hp].setub(float(dict_power_th[hp]))
+            p_charge = int(round((float(self.plant_dict[hp]['capacity']) - float(dict_soc_old[hp])) / 0.25))
+            p_discharge = int(round(float(dict_soc_old[hp]) / 0.25))
+            rtc_model.q_tes_in[hp].setub(p_charge)
+            rtc_model.q_tes_out[hp].setub(p_discharge)
+            # TODO: Taken out and adjusted to maximum possible powers as seen above
+            #rtc_model.q_tes_in[hp].setub(int(float(dict_power_th[hp]) * 5))  # TODO: Times 5 to ensure it is always big enough
+            #rtc_model.q_tes_out[hp].setub(int(float(dict_power_th[hp]) * 30))  # TODO: Times 20 as the output power is so much higher in Soner's calculations
 
         # Rule that SOC must be greater than zero and cannot exceed the TES capacity
         def tes_soc_upper_limit(_model, _hp):
@@ -408,6 +413,20 @@ class Prosumer:
                 # Set upper charge/discharge boundary
                 rtc_model.p_bat_in[bat].setub(self.plant_dict[bat]["power"])
                 rtc_model.p_bat_out[bat].setub(self.plant_dict[bat]["power"])
+                # TODO: Set upper charge/discharge boundary but this time the battery cannot increase the grid power
+                #  (taken back out again as it does not do much)
+                # gridpower = df_target_grid_power[f"power_{self.config_dict['id_meter_grid']}"]
+                #
+                # if gridpower < 0:
+                #     rtc_model.p_bat_in[bat].setub(abs(gridpower))
+                #     rtc_model.p_bat_out[bat].setub(self.plant_dict[bat]["power"])
+                # elif gridpower > 0:
+                #     rtc_model.p_bat_in[bat].setub(self.plant_dict[bat]["power"])
+                #     rtc_model.p_bat_out[bat].setub(abs(gridpower))
+                # else:
+                #     rtc_model.p_bat_in[bat].setub(self.plant_dict[bat]["power"])
+                #     rtc_model.p_bat_out[bat].setub(self.plant_dict[bat]["power"])
+
                 # In- and outflow must equal target power plus/minus deviation
                 rtc_model.con_bat_dev.add(
                     expr=rtc_model.p_bat_out[bat] - rtc_model.p_bat_in[bat]
@@ -614,6 +633,9 @@ class Prosumer:
             q_meas.set_index("timestamp", inplace=True)
             q_meas = float(q_meas[q_meas.index == self.ts_delivery_prev]["heat"].values)
             q_load += float(q_meas)
+            #if self.user_id == '0000000003':
+            #    print()
+            #    print(f'Th. load: {int(q_meas)} W')
         rtc_model.q_load_fix = q_load
 
     def add_c_balance_rtc(self, rtc_model, df_target_grid_power):
@@ -671,7 +693,9 @@ class Prosumer:
         def obj_rule(_model):
             obj = 0.5 * (_model.deviation_gr_plus + _model.deviation_gr_minus)
             for _bat in self._get_list_plants(plant_type="bat"):
-                obj += 0.1 * _model.deviation_bat_minus[_bat]
+                # TODO: Changed from 0.1 to 0.4 and added bat_plus
+                obj += 0.4 * _model.deviation_bat_minus[_bat]
+                obj += 0.4 * _model.deviation_bat_plus[_bat]
             for _ev in self._get_list_plants(plant_type="ev"):
                 obj += _model.deviation_ev_minus[_ev]
             return obj
@@ -687,6 +711,8 @@ class Prosumer:
             meas_grid += self.meas_val[hh]
         for pv in self._get_list_plants(plant_type="pv"):
             self.meas_val[pv] = rtc_model.p_pv[pv].value
+            #if self.user_id == '0000000003':
+            #    print(f"pv power: {int(rtc_model.p_pv[pv].value)} W")
             meas_grid += rtc_model.p_pv[pv].value
         for wind in self._get_list_plants(plant_type="wind"):
             self.meas_val[wind] = rtc_model.p_wind[wind].value
@@ -702,6 +728,11 @@ class Prosumer:
             tes_soc_new = dict_soc_old \
                           - 0.25 * rtc_model.q_tes_out[hp].value / self.plant_dict[hp]["efficiency"] \
                           + 0.25 * rtc_model.q_tes_in[hp].value * self.plant_dict[hp]["efficiency"]
+            tes_soc_new = int(round(tes_soc_new))
+            #if self.user_id == '0000000003':
+            #    print(f"hp power: {int(rtc_model.p_hp[hp].value)} W")
+            #    print(f"hp storage: old: {dict_soc_old}, new: {tes_soc_new}, capacity: {self.plant_dict[hp]['capacity']} "
+            #          f"({round(tes_soc_new / self.plant_dict[hp]['capacity'] * 100, 1)}%)")
             with open(f"{self.path}/soc_{hp}.json", "w") as write_file:
                 json.dump(tes_soc_new, write_file)
         for bat in self._get_list_plants(plant_type="bat"):
@@ -741,33 +772,48 @@ class Prosumer:
             df_target_grid_power = (ft.read_dataframe(f"{self.path}/target_grid_power.ft")
                                     .pipe(pd.DataFrame.set_index, keys="timestamp")
                                     ).loc[self.ts_delivery_prev]
+
+            #if self.user_id == '0000000009':
+            #    print(df_target_grid_power.to_string())
+            #exit()
+
+            #df_target_grid_power = df_target_grid_power.loc[self.ts_delivery_prev, f"power_{self.config_dict['id_meter_grid']}"]
+
             # non-default controllers common model parameters initialized here.
+            factor = 1
+            while True:
+                rtc_model = pyo.ConcreteModel()
 
-            rtc_model = pyo.ConcreteModel()
+                self.add_p_fix_load(rtc_model)
 
-            self.add_p_fix_load(rtc_model)
+                self.add_q_fix_load(rtc_model)
 
-            self.add_q_fix_load(rtc_model)
+                self.add_c_pv_rtc_urbs(rtc_model)
 
-            self.add_c_pv_rtc_urbs(rtc_model)
+                # self.add_c_wind_rtc(rtc_model)
 
-            # self.add_c_wind_rtc(rtc_model)
+                # self.add_c_fixedgen_rtc(rtc_model)
 
-            # self.add_c_fixedgen_rtc(rtc_model)
+                self.add_c_hp_rtc_urbs(rtc_model, factor)
 
-            self.add_c_hp_rtc_urbs(rtc_model)
+                self.add_c_bat_rtc(rtc_model, df_target_grid_power)
 
-            self.add_c_bat_rtc(rtc_model, df_target_grid_power)
+                self.add_c_ev_rtc_urbs(rtc_model, df_target_grid_power)
 
-            self.add_c_ev_rtc_urbs(rtc_model, df_target_grid_power)
+                self.add_c_balance_rtc(rtc_model, df_target_grid_power)
 
-            self.add_c_balance_rtc(rtc_model, df_target_grid_power)
+                self.add_obj_rtc(rtc_model)
 
-            self.add_obj_rtc(rtc_model)
+                # solve model
+                # rtc_model.write('datei_rtc_pre.lp', io_options={'symbolic_solver_labels': True})
+                status = pyo.SolverFactory(self.config_dict["solver"]).solve(rtc_model)
 
-            # solve model
-            # rtc_model.write('datei_rtc_pre.lp', io_options={'symbolic_solver_labels': True})
-            status = pyo.SolverFactory(self.config_dict["solver"]).solve(rtc_model)
+                if status.solver.termination_condition != pyo.TerminationCondition.optimal:
+                    factor += 0.25
+                    print(f'RTC: Error in user {self.user_id}. Trying again with factor {factor}.')
+                else:
+                    break
+
             # rtc_model.write('datei_rtc.lp', io_options={'symbolic_solver_labels': True})
             if status.solver.termination_condition != pyo.TerminationCondition.optimal:
                 rtc_model.write(f'datei_rtc_error_{self.user_id}.lp', io_options={'symbolic_solver_labels': True})
@@ -1287,9 +1333,9 @@ class Prosumer:
         self.mpc_table = ft.read_dataframe(f"{self.path}/fcasts_current.ft").set_index("timestamp")
         self.mpc_table = self.mpc_table.fillna(0)
 
-        if self.user_id == '0000000004':
-            print(self.user_id)
-            print(self.mpc_table.to_string())
+        #if self.user_id == '0000000004':
+        #    print(self.user_id)
+        #    print(self.mpc_table.to_string())
 
         # Choose which controller to use
         # Rule-based if household has no controllable loads
@@ -1301,448 +1347,457 @@ class Prosumer:
 
         # MPC controller
         if controller == "mpc":
-            # Declare the pyomo model
-            model = pyo.ConcreteModel()
-            # declare decision variables (vectors of same length as MPC horizon)
-            # pv power variable
+            factor = 1
+            while True:
+                # Declare the pyomo model
+                model = pyo.ConcreteModel()
+                # declare decision variables (vectors of same length as MPC horizon)
+                # pv power variable
 
-            # PV variables
-            if self._get_list_plants(plant_type="pv"):
-                # PV power output
-                model.p_pv = pyo.Var(self._get_list_plants(plant_type="pv"),
-                                     range(0, self.config_dict["mpc_horizon"]),
-                                     domain=pyo.NonNegativeReals)
-
-            # Not needed
-            # if self._get_list_plants(plant_type="wind"):
-            #     model.p_wind = pyo.Var(self._get_list_plants(plant_type="wind"),
-            #                            range(0, self.config_dict["mpc_horizon"]),
-            #                            domain=pyo.NonNegativeReals)
-            #
-            # # fixedgen power variable
-            # if self._get_list_plants(plant_type="fixedgen"):
-            #     model.p_fixedgen = pyo.Var(self._get_list_plants(plant_type="fixedgen"),
-            #                                range(0, self.config_dict["mpc_horizon"]),
-            #                                domain=pyo.NonNegativeReals)
-
-            # HP and thermal storage (TES) variables
-            if self._get_list_plants(plant_type="hp"):
-                # HP electric power
-                model.p_hp = pyo.Var(self._get_list_plants(plant_type="hp"),
-                                     range(0, self.config_dict["mpc_horizon"]),
-                                     domain=pyo.NonPositiveReals)
-                # HP thermal power
-                model.q_hp = pyo.Var(self._get_list_plants(plant_type="hp"),
-                                     range(0, self.config_dict["mpc_horizon"]),
-                                     domain=pyo.NonNegativeReals)
-                # HP on/off switch
-                model.p_hp_milp = pyo.Var(self._get_list_plants(plant_type="hp"),
-                                          range(0, self.config_dict["mpc_horizon"]),
-                                          domain=pyo.Binary)
-
-                # TES variables
-                # Note: The number is the same as the number of hps
-                # TES thermal charging power
-                model.q_tes_in = pyo.Var(self._get_list_plants(plant_type="hp"),
-                                         range(self.config_dict["mpc_horizon"]),
+                # PV variables
+                if self._get_list_plants(plant_type="pv"):
+                    # PV power output
+                    model.p_pv = pyo.Var(self._get_list_plants(plant_type="pv"),
+                                         range(0, self.config_dict["mpc_horizon"]),
                                          domain=pyo.NonNegativeReals)
-                # TES thermal discharging power
-                model.q_tes_out = pyo.Var(self._get_list_plants(plant_type="hp"),
-                                          range(self.config_dict["mpc_horizon"]),
-                                          domain=pyo.NonNegativeReals)
-                # TES on/off switch
-                model.q_tes_milp = pyo.Var(self._get_list_plants(plant_type="hp"),
-                                           range(self.config_dict["mpc_horizon"]),
-                                           domain=pyo.Binary)
-                # TES SOC
-                model.soc_tes = pyo.Var(self._get_list_plants(plant_type="hp"),
-                                        range(self.config_dict["mpc_horizon"]),
-                                        domain=pyo.NonNegativeReals)
 
-                # Set upper boundaries (setub) for charging/discharging power and TES SOC
-                for hp in self._get_list_plants(plant_type="hp"):
+                # Not needed
+                # if self._get_list_plants(plant_type="wind"):
+                #     model.p_wind = pyo.Var(self._get_list_plants(plant_type="wind"),
+                #                            range(0, self.config_dict["mpc_horizon"]),
+                #                            domain=pyo.NonNegativeReals)
+                #
+                # # fixedgen power variable
+                # if self._get_list_plants(plant_type="fixedgen"):
+                #     model.p_fixedgen = pyo.Var(self._get_list_plants(plant_type="fixedgen"),
+                #                                range(0, self.config_dict["mpc_horizon"]),
+                #                                domain=pyo.NonNegativeReals)
+
+                # HP and thermal storage (TES) variables
+                if self._get_list_plants(plant_type="hp"):
+                    # HP electric power
+                    model.p_hp = pyo.Var(self._get_list_plants(plant_type="hp"),
+                                         range(0, self.config_dict["mpc_horizon"]),
+                                         domain=pyo.NonPositiveReals)
+                    # HP thermal power
+                    model.q_hp = pyo.Var(self._get_list_plants(plant_type="hp"),
+                                         range(0, self.config_dict["mpc_horizon"]),
+                                         domain=pyo.NonNegativeReals)
+                    # HP on/off switch
+                    model.p_hp_milp = pyo.Var(self._get_list_plants(plant_type="hp"),
+                                              range(0, self.config_dict["mpc_horizon"]),
+                                              domain=pyo.Binary)
+
+                    # TES variables
+                    # Note: The number is the same as the number of hps
+                    # TES thermal charging power
+                    model.q_tes_in = pyo.Var(self._get_list_plants(plant_type="hp"),
+                                             range(self.config_dict["mpc_horizon"]),
+                                             domain=pyo.NonNegativeReals)
+                    # TES thermal discharging power
+                    model.q_tes_out = pyo.Var(self._get_list_plants(plant_type="hp"),
+                                              range(self.config_dict["mpc_horizon"]),
+                                              domain=pyo.NonNegativeReals)
+                    # TES on/off switch
+                    model.q_tes_milp = pyo.Var(self._get_list_plants(plant_type="hp"),
+                                               range(self.config_dict["mpc_horizon"]),
+                                               domain=pyo.Binary)
+                    # TES SOC
+                    model.soc_tes = pyo.Var(self._get_list_plants(plant_type="hp"),
+                                            range(self.config_dict["mpc_horizon"]),
+                                            domain=pyo.NonNegativeReals)
+
+                    # Set upper boundaries (setub) for charging/discharging power and TES SOC
+                    for hp in self._get_list_plants(plant_type="hp"):
+                        for i in range(self.config_dict["mpc_horizon"]):
+                            # TODO: changed to contain the correct COP forecast
+                            model.q_tes_in[hp, i].setub(
+                                int(round(self.plant_dict[hp]["power"] * self.mpc_table.iloc[i].loc[f'cop_{hp}'])))
+                            # TODO: changed to 20 times that as the TES in Soner's model is much much bigger
+                            model.q_tes_out[hp, i].setub(
+                                int(round(self.plant_dict[hp]["power"] * self.mpc_table.iloc[i].loc[f'cop_{hp}'] * 30)))
+                            model.soc_tes[hp, i].setub(float(self.plant_dict[hp]["capacity"]))
+
+                # Battery variables
+                if self._get_list_plants(plant_type="bat"):
+                    # Battery charging power
+                    model.p_bat_in = pyo.Var(self._get_list_plants(plant_type="bat"),
+                                             range(self.config_dict["mpc_horizon"]),
+                                             domain=pyo.NonNegativeReals)
+                    # Battery discharging power
+                    model.p_bat_out = pyo.Var(self._get_list_plants(plant_type="bat"),
+                                              range(self.config_dict["mpc_horizon"]),
+                                              domain=pyo.NonNegativeReals)
+                    # Battery on/off switch
+                    model.p_bat_milp = pyo.Var(self._get_list_plants(plant_type="bat"),
+                                               range(self.config_dict["mpc_horizon"]),
+                                               domain=pyo.Binary)
+                    # Battery SOC
+                    model.soc_bat = pyo.Var(self._get_list_plants(plant_type="bat"),
+                                            range(self.config_dict["mpc_horizon"]),
+                                            domain=pyo.NonNegativeReals)
+
+                # Set upper boundaries (setub) for charging/discharging power and SOC
+                for bat in self._get_list_plants(plant_type="bat"):
                     for i in range(self.config_dict["mpc_horizon"]):
-                        # TODO: this needs to be changed to the COPs of the timeseries forecast
-                        print(i)
-                        exit()
-                        model.q_tes_in[hp, i].setub(
-                            float(self.plant_dict[hp]["power"] * 5))  # just assumed 5 as high COP
-                        model.q_tes_out[hp, i].setub(float(self.plant_dict[hp]["power"] * 5))
-                        model.soc_tes[hp, i].setub(float(self.plant_dict[hp]["capacity"]))
+                        model.p_bat_in[bat, i].setub(self.plant_dict[bat]["power"])
+                        model.p_bat_out[bat, i].setub(self.plant_dict[bat]["power"])
+                        model.soc_bat[bat, i].setub(self.plant_dict[bat]["capacity"])
 
-            # Battery variables
-            if self._get_list_plants(plant_type="bat"):
-                # Battery charging power
-                model.p_bat_in = pyo.Var(self._get_list_plants(plant_type="bat"),
-                                         range(self.config_dict["mpc_horizon"]),
-                                         domain=pyo.NonNegativeReals)
-                # Battery discharging power
-                model.p_bat_out = pyo.Var(self._get_list_plants(plant_type="bat"),
-                                          range(self.config_dict["mpc_horizon"]),
-                                          domain=pyo.NonNegativeReals)
-                # Battery on/off switch
-                model.p_bat_milp = pyo.Var(self._get_list_plants(plant_type="bat"),
+                # EV decision variables, absolute components
+                if self._get_list_plants(plant_type="ev"):
+                    # EV charging variable
+                    model.p_ev_in = pyo.Var(self._get_list_plants(plant_type="ev"),
+                                            range(self.config_dict["mpc_horizon"]),
+                                            domain=pyo.NonNegativeReals)
+                    # EV discharging variable
+                    model.p_ev_out = pyo.Var(self._get_list_plants(plant_type="ev"),
+                                             range(self.config_dict["mpc_horizon"]),
+                                             domain=pyo.NonNegativeReals)
+                    # EV on/off switch
+                    model.p_ev_milp = pyo.Var(self._get_list_plants(plant_type="ev"),
+                                              range(self.config_dict["mpc_horizon"]),
+                                              domain=pyo.Binary)
+                    # EV battery SOC
+                    model.soc_ev = pyo.Var(self._get_list_plants(plant_type="ev"),
                                            range(self.config_dict["mpc_horizon"]),
-                                           domain=pyo.Binary)
-                # Battery SOC
-                model.soc_bat = pyo.Var(self._get_list_plants(plant_type="bat"),
-                                        range(self.config_dict["mpc_horizon"]),
-                                        domain=pyo.NonNegativeReals)
+                                           domain=pyo.NonNegativeReals)
+                    # model.ev_slack = pyo.Var(self._get_list_plants(plant_type="ev"),
+                    #                          range(self.config_dict["mpc_horizon"]),
+                    #                          domain=pyo.NonNegativeReals)
+                    model.con_soc_ev = pyo.ConstraintList()
 
-            # Set upper boundaries (setub) for charging/discharging power and SOC
-            for bat in self._get_list_plants(plant_type="bat"):
-                for i in range(self.config_dict["mpc_horizon"]):
-                    model.p_bat_in[bat, i].setub(self.plant_dict[bat]["power"])
-                    model.p_bat_out[bat, i].setub(self.plant_dict[bat]["power"])
-                    model.soc_bat[bat, i].setub(self.plant_dict[bat]["capacity"])
+                    model.con_p_ev_minus = pyo.ConstraintList()
+                    model.con_p_ev_plus = pyo.ConstraintList()
 
-            # EV decision variables, absolute components
-            if self._get_list_plants(plant_type="ev"):
-                # EV charging variable
-                model.p_ev_in = pyo.Var(self._get_list_plants(plant_type="ev"),
-                                        range(self.config_dict["mpc_horizon"]),
-                                        domain=pyo.NonNegativeReals)
-                # EV discharging variable
-                model.p_ev_out = pyo.Var(self._get_list_plants(plant_type="ev"),
-                                         range(self.config_dict["mpc_horizon"]),
-                                         domain=pyo.NonNegativeReals)
-                # EV on/off switch
-                model.p_ev_milp = pyo.Var(self._get_list_plants(plant_type="ev"),
-                                          range(self.config_dict["mpc_horizon"]),
-                                          domain=pyo.Binary)
-                # EV battery SOC
-                model.soc_ev = pyo.Var(self._get_list_plants(plant_type="ev"),
-                                       range(self.config_dict["mpc_horizon"]),
-                                       domain=pyo.NonNegativeReals)
-                # model.ev_slack = pyo.Var(self._get_list_plants(plant_type="ev"),
-                #                          range(self.config_dict["mpc_horizon"]),
-                #                          domain=pyo.NonNegativeReals)
-                model.con_soc_ev = pyo.ConstraintList()
+                dict_soc_ev_min = {}
+                dict_soc_ev_old = {}
+                for ev in self._get_list_plants(plant_type="ev"):
+                    # Read in old SOC of EV and save to dict
+                    with open(f"{self.path}/soc_{ev}.json", "r") as read_file:
+                        dict_soc_ev_old[ev] = json.load(read_file)
 
-                model.con_p_ev_minus = pyo.ConstraintList()
-                model.con_p_ev_plus = pyo.ConstraintList()
+                    n_ev = self.plant_dict[ev]["efficiency"]  # charging/discharging efficiency
+                    dict_soc_ev_min[ev] = [0] * self.config_dict["mpc_horizon"]  # set up minimum charge variable
+                    soc_potential = dict_soc_ev_old[ev]  # current_soc (potential for charge/discharge)
 
-            dict_soc_ev_min = {}
-            dict_soc_ev_old = {}
-            for ev in self._get_list_plants(plant_type="ev"):
-                # Read in old SOC of EV and save to dict
-                with open(f"{self.path}/soc_{ev}.json", "r") as read_file:
-                    dict_soc_ev_old[ev] = json.load(read_file)
+                    # Computes the minimum charge that needs to be reached at each step
+                    # Note: Changed from distance based to energy based
+                    for i in range(self.config_dict["mpc_horizon"]):
+                        # Compute the maximum possible discharge to return with a minimum SoC of 5 %.
+                        max_discharge = max(0, soc_potential - 0.05 * self.plant_dict[ev]["capacity"])
 
-                n_ev = self.plant_dict[ev]["efficiency"]  # charging/discharging efficiency
-                dict_soc_ev_min[ev] = [0] * self.config_dict["mpc_horizon"]  # set up minimum charge variable
-                soc_potential = dict_soc_ev_old[ev]  # current_soc (potential for charge/discharge)
+                        # Save value to new column that contains the adjusted discharge
+                        self.mpc_table.loc[self.mpc_table.index[i], f"demand_Wh_adjusted_{ev}"] = \
+                            min(self.mpc_table[f"demand_Wh_{ev}"].iloc[i], max_discharge)
 
-                # Computes the minimum charge that needs to be reached at each step
-                # Note: Changed from distance based to energy based
-                for i in range(self.config_dict["mpc_horizon"]):
-                    # Compute the maximum possible discharge to return with a minimum SoC of 5 %.
-                    max_discharge = max(0, soc_potential - 0.05 * self.plant_dict[ev]["capacity"])
+                        # Add constraint that SoC can never surpass the maximum capacity of the vehicle
+                        model.con_soc_ev.add(expr=model.soc_ev[ev, i] <= self.plant_dict[ev].get("capacity"))
 
-                    # Save value to new column that contains the adjusted discharge
-                    self.mpc_table.loc[self.mpc_table.index[i], f"demand_Wh_adjusted_{ev}"] = \
-                        min(self.mpc_table[f"demand_Wh_{ev}"].iloc[i], max_discharge)
+                        # Subtract consumption based on the lost energy since last time step (0.25 --> 15 min --> 900 s)
+                        soc_potential -= self.mpc_table[f"demand_Wh_adjusted_{ev}"].iloc[i]
 
-                    # Add constraint that SoC can never surpass the maximum capacity of the vehicle
-                    model.con_soc_ev.add(expr=model.soc_ev[ev, i] <= self.plant_dict[ev].get("capacity"))
+                        # Add charged energy since last time step (0.25 h --> 15 min --> 900 s) to see what is the maximum
+                        #  possible charge that can be reached (can exceed capacity)
+                        soc_potential += self.plant_dict[ev].get("charging_power") * 0.25 * n_ev \
+                                         * self.mpc_table[f"availability_{ev}"].iloc[i]
 
-                    # Subtract consumption based on the lost energy since last time step (0.25 --> 15 min --> 900 s)
-                    soc_potential -= self.mpc_table[f"demand_Wh_adjusted_{ev}"].iloc[i]
+                        # Keep charged energy between 5 % and 80 % of maximum capacity
+                        soc_potential = max(min(soc_potential, 0.8 * self.plant_dict[ev].get("capacity")),
+                                            0.05 * self.plant_dict[ev].get("capacity"))
 
-                    # Add charged energy since last time step (0.25 h --> 15 min --> 900 s) to see what is the maximum
-                    #  possible charge that can be reached (can exceed capacity)
-                    soc_potential += self.plant_dict[ev].get("charging_power") * 0.25 * n_ev \
-                                     * self.mpc_table[f"availability_{ev}"].iloc[i]
+                        # Case 1: currently not last time step, EV is available but will have left next time step
+                        # Case 2: currently last time step, EV is available
+                        # Action: Add constraint that SoC needs to be at least the potential SoC
+                        if (i < self.config_dict["mpc_horizon"] - 1 and self.mpc_table[f"availability_{ev}"].iloc[i] == 1
+                            and self.mpc_table[f"availability_{ev}"].iloc[i + 1] == 0) \
+                                or (i == self.config_dict["mpc_horizon"] - 1
+                                    and self.mpc_table[f"availability_{ev}"].iloc[i] == 1):
+                            model.con_soc_ev.add(expr=model.soc_ev[ev, i] >= soc_potential)  # - model.ev_slack[ev, i])
+                            dict_soc_ev_min[ev][i] = soc_potential  # set minimum charging power for EV at timestep i
 
-                    # Keep charged energy between 5 % and 80 % of maximum capacity
-                    soc_potential = max(min(soc_potential, 0.8 * self.plant_dict[ev].get("capacity")),
-                                        0.05 * self.plant_dict[ev].get("capacity"))
+                        # Set availability and powers depending on if EV is available or not
+                        # EV is available
+                        if self.mpc_table[f"availability_{ev}"].iloc[i] == 1:
+                            # Set if EV can charge or discharge (only one can happend at a time)
+                            model.con_p_ev_minus.add(expr=model.p_ev_in[ev, i] <= 100000 * (1 - model.p_ev_milp[ev, i]))
+                            model.con_p_ev_plus.add(expr=model.p_ev_out[ev, i] <= 100000 * model.p_ev_milp[ev, i])
 
-                    # Case 1: currently not last time step, EV is available but will have left next time step
-                    # Case 2: currently last time step, EV is available
-                    # Action: Add constraint that SoC needs to be at least the potential SoC
-                    if (i < self.config_dict["mpc_horizon"] - 1 and self.mpc_table[f"availability_{ev}"].iloc[i] == 1
-                        and self.mpc_table[f"availability_{ev}"].iloc[i + 1] == 0) \
-                            or (i == self.config_dict["mpc_horizon"] - 1
-                                and self.mpc_table[f"availability_{ev}"].iloc[i] == 1):
-                        model.con_soc_ev.add(expr=model.soc_ev[ev, i] >= soc_potential)  # - model.ev_slack[ev, i])
-                        dict_soc_ev_min[ev][i] = soc_potential  # set minimum charging power for EV at timestep i
+                            # Set maximum charging power (upper boundaries)
+                            model.p_ev_in[ev, i].setub(self.plant_dict[ev].get("charging_power"))
 
-                    # Set availability and powers depending on if EV is available or not
-                    # EV is available
-                    if self.mpc_table[f"availability_{ev}"].iloc[i] == 1:
-                        # Set if EV can charge or discharge (only one can happend at a time)
-                        model.con_p_ev_minus.add(expr=model.p_ev_in[ev, i] <= 100000 * (1 - model.p_ev_milp[ev, i]))
-                        model.con_p_ev_plus.add(expr=model.p_ev_out[ev, i] <= 100000 * model.p_ev_milp[ev, i])
+                            # Set maximum discharging power depending on if v2g is available or not
+                            p_discharge = self.plant_dict[ev].get("charging_power") if self.plant_dict[ev].get("v2g") else 0
+                            model.p_ev_out[ev, i].setub(p_discharge)
 
-                        # Set maximum charging power (upper boundaries)
-                        model.p_ev_in[ev, i].setub(self.plant_dict[ev].get("charging_power"))
+                        # EV is not available
+                        else:
+                            model.con_p_ev_minus.add(expr=model.p_ev_in[ev, i] == 0)
+                            model.con_p_ev_plus.add(expr=model.p_ev_out[ev, i] == 0)
 
-                        # Set maximum discharging power depending on if v2g is available or not
-                        p_discharge = self.plant_dict[ev].get("charging_power") if self.plant_dict[ev].get("v2g") else 0
-                        model.p_ev_out[ev, i].setub(p_discharge)
+                    # Loop through mpc horizon backwards to calculate minimal SoC the EV must reach in each timestep
+                    # hold in order to be charged before departure
+                    for i in range(self.config_dict["mpc_horizon"] - 1, 0, -1):
+                        if dict_soc_ev_min[ev][i] > 0:
+                            dict_soc_ev_min[ev][i - 1] = dict_soc_ev_min[ev][i] - \
+                                                         0.25 * self.plant_dict[ev]["charging_power"] * n_ev
+                            dict_soc_ev_min[ev][i - 1] = max(dict_soc_ev_min[ev][i - 1], 0)
 
-                    # EV is not available
-                    else:
-                        model.con_p_ev_minus.add(expr=model.p_ev_in[ev, i] == 0)
-                        model.con_p_ev_plus.add(expr=model.p_ev_out[ev, i] == 0)
+                # Add constraint that the SoC of each time step needs to be the SoC of the previous one plus the charge and
+                #   minus the discharge and the consumption due to the driven distance
+                model.con_soc_ev_calc = pyo.ConstraintList()
+                for ev in self._get_list_plants(plant_type="ev"):
+                    n_ev = self.plant_dict[ev]["efficiency"]
+                    model.con_soc_ev_calc.add(expr=dict_soc_ev_old[ev]
+                                                   - 0.25 * model.p_ev_out[ev, 0] / n_ev
+                                                   + 0.25 * model.p_ev_in[ev, 0] * n_ev
+                                                   - self.mpc_table[f"demand_Wh_adjusted_{ev}"].iloc[0]
+                                                   == model.soc_ev[ev, 0])
+                    for t in range(1, self.config_dict["mpc_horizon"]):
+                        model.con_soc_ev_calc.add(expr=model.soc_ev[ev, t - 1]
+                                                       - 0.25 * model.p_ev_out[ev, t] / n_ev
+                                                       + 0.25 * model.p_ev_in[ev, t] * n_ev
+                                                       - self.mpc_table[f"demand_Wh_adjusted_{ev}"].iloc[t]
+                                                       == model.soc_ev[ev, t])
 
-                # Loop through mpc horizon backwards to calculate minimal SoC the EV must reach in each timestep
-                # hold in order to be charged before departure
-                for i in range(self.config_dict["mpc_horizon"] - 1, 0, -1):
-                    if dict_soc_ev_min[ev][i] > 0:
-                        dict_soc_ev_min[ev][i - 1] = dict_soc_ev_min[ev][i] - \
-                                                     0.25 * self.plant_dict[ev]["charging_power"] * n_ev
-                        dict_soc_ev_min[ev][i - 1] = max(dict_soc_ev_min[ev][i - 1], 0)
+                # Add variables for grid powerflow
+                model.p_grid_out = pyo.Var(range(self.config_dict["mpc_horizon"]), domain=pyo.NonNegativeReals)
+                model.p_grid_in = pyo.Var(range(self.config_dict["mpc_horizon"]), domain=pyo.NonNegativeReals)
+                model.p_grid_milp = pyo.Var(range(self.config_dict["mpc_horizon"]), domain=pyo.Binary)
 
-            # Add constraint that the SoC of each time step needs to be the SoC of the previous one plus the charge and
-            #   minus the discharge and the consumption due to the driven distance
-            model.con_soc_ev_calc = pyo.ConstraintList()
-            for ev in self._get_list_plants(plant_type="ev"):
-                n_ev = self.plant_dict[ev]["efficiency"]
-                model.con_soc_ev_calc.add(expr=dict_soc_ev_old[ev]
-                                               - 0.25 * model.p_ev_out[ev, 0] / n_ev
-                                               + 0.25 * model.p_ev_in[ev, 0] * n_ev
-                                               - self.mpc_table[f"demand_Wh_adjusted_{ev}"].iloc[0]
-                                               == model.soc_ev[ev, 0])
-                for t in range(1, self.config_dict["mpc_horizon"]):
-                    model.con_soc_ev_calc.add(expr=model.soc_ev[ev, t - 1]
-                                                   - 0.25 * model.p_ev_out[ev, t] / n_ev
-                                                   + 0.25 * model.p_ev_in[ev, t] * n_ev
-                                                   - self.mpc_table[f"demand_Wh_adjusted_{ev}"].iloc[t]
-                                                   == model.soc_ev[ev, t])
+                # Add the sum of the household electric loads for each timestep to the p_load vector
+                p_load = [0] * self.config_dict["mpc_horizon"]
+                for hh in self._get_list_plants(plant_type="hh"):
+                    for i, ts_d in enumerate(range(self.ts_delivery_current,
+                                                   self.ts_delivery_current + self.config_dict["mpc_horizon"] * 900, 900)):
+                        p_load[i] += float(self.mpc_table.loc[ts_d, f"power_{hh}"])
 
-            # Add variables for grid powerflow
-            model.p_grid_out = pyo.Var(range(self.config_dict["mpc_horizon"]), domain=pyo.NonNegativeReals)
-            model.p_grid_in = pyo.Var(range(self.config_dict["mpc_horizon"]), domain=pyo.NonNegativeReals)
-            model.p_grid_milp = pyo.Var(range(self.config_dict["mpc_horizon"]), domain=pyo.Binary)
+                # Add the sum of the household thermal loads for each timestep to the p_load vector
+                q_load = [0] * self.config_dict["mpc_horizon"]
+                for hp in self._get_list_plants(plant_type="hp"):
+                    for i, ts_d in enumerate(range(self.ts_delivery_current,
+                                                   self.ts_delivery_current + self.config_dict["mpc_horizon"] * 900, 900)):
+                        q_load[i] += float(self.mpc_table.loc[ts_d, f"heat_{hp}"])
 
-            # Add the sum of the household electric loads for each timestep to the p_load vector
-            p_load = [0] * self.config_dict["mpc_horizon"]
-            for hh in self._get_list_plants(plant_type="hh"):
-                for i, ts_d in enumerate(range(self.ts_delivery_current,
-                                               self.ts_delivery_current + self.config_dict["mpc_horizon"] * 900, 900)):
-                    p_load[i] += float(self.mpc_table.loc[ts_d, f"power_{hh}"])
+                # Add the constraint that the battery can either charge or discharge
+                model.con_p_bat_bin = pyo.ConstraintList()
+                for bat in self._get_list_plants(plant_type="bat"):
+                    for t in range(self.config_dict["mpc_horizon"]):
+                        model.con_p_bat_bin.add(expr=model.p_bat_in[bat, t] <= 1000000 * (1 - model.p_bat_milp[bat, t]))
+                        model.con_p_bat_bin.add(expr=model.p_bat_out[bat, t] <= 1000000 * model.p_bat_milp[bat, t])
 
-            # Add the sum of the household thermal loads for each timestep to the p_load vector
-            q_load = [0] * self.config_dict["mpc_horizon"]
-            for hp in self._get_list_plants(plant_type="hp"):
-                for i, ts_d in enumerate(range(self.ts_delivery_current,
-                                               self.ts_delivery_current + self.config_dict["mpc_horizon"] * 900, 900)):
-                    q_load[i] += float(self.mpc_table.loc[ts_d, f"heat_{hp}"])
-
-            # Add the constraint that the battery can either charge or discharge
-            model.con_p_bat_bin = pyo.ConstraintList()
-            for bat in self._get_list_plants(plant_type="bat"):
+                # Add the constraint that an agent can either draw from or feed into the grid
+                model.con_grid_bin = pyo.ConstraintList()
                 for t in range(self.config_dict["mpc_horizon"]):
-                    model.con_p_bat_bin.add(expr=model.p_bat_in[bat, t] <= 1000000 * (1 - model.p_bat_milp[bat, t]))
-                    model.con_p_bat_bin.add(expr=model.p_bat_out[bat, t] <= 1000000 * model.p_bat_milp[bat, t])
+                    model.con_grid_bin.add(expr=model.p_grid_in[t] <= 1000000 * (1 - model.p_grid_milp[t]))
+                    model.con_grid_bin.add(expr=model.p_grid_out[t] <= 1000000 * model.p_grid_milp[t])
 
-            # Add the constraint that an agent can either draw from or feed into the grid
-            model.con_grid_bin = pyo.ConstraintList()
-            for t in range(self.config_dict["mpc_horizon"]):
-                model.con_grid_bin.add(expr=model.p_grid_in[t] <= 1000000 * (1 - model.p_grid_milp[t]))
-                model.con_grid_bin.add(expr=model.p_grid_out[t] <= 1000000 * model.p_grid_milp[t])
-
-            # Add PV upper bound limit
-            model.con_p_pv = pyo.ConstraintList()
-            model.sum_pv = [0] * self.config_dict["mpc_horizon"]
-            # Loop through all PV plants
-            for plant in self._get_list_plants(plant_type=["pv"]):
-                # Loop through all timesteps
-                for t, t_d in enumerate(range(self.ts_delivery_current,
-                                              self.ts_delivery_current + 900 * self.config_dict["mpc_horizon"], 900)):
-                    # Add predicted output of PV plant for each plant to given timestep
-                    model.sum_pv[t] += self.mpc_table.loc[t_d, f"power_{plant}"]
-                    # Set upper bound to smaller equal of predicted output if PV CAN be controlled
-                    #print(self.user_id)
-                    #print(plant)
-                    #print(self.mpc_table)
-                    if self.plant_dict[plant].get("controllable"):
-                        model.con_p_pv.add(
-                            expr=model.p_pv[plant, t] <= round(self.mpc_table.loc[t_d, f"power_{plant}"], 1))
-                    # Set upper bound to equal of predicted output if PV CANNOT be controlled
-                    else:
+                # Add PV upper bound limit
+                model.con_p_pv = pyo.ConstraintList()
+                model.sum_pv = [0] * self.config_dict["mpc_horizon"]
+                # Loop through all PV plants
+                for plant in self._get_list_plants(plant_type=["pv"]):
+                    # Loop through all timesteps
+                    for t, t_d in enumerate(range(self.ts_delivery_current,
+                                                  self.ts_delivery_current + 900 * self.config_dict["mpc_horizon"], 900)):
+                        # Add predicted output of PV plant for each plant to given timestep
+                        model.sum_pv[t] += self.mpc_table.loc[t_d, f"power_{plant}"]
+                        # Set upper bound to smaller equal of predicted output if PV CAN be controlled
+                        #print(self.user_id)
+                        #print(plant)
+                        #print(self.mpc_table)
+                        # TODO: Taken out as PV is always supposed to be at maximum power (now back in)
+                        # if self.plant_dict[plant].get("controllable"):
+                        #     model.con_p_pv.add(
+                        #         expr=model.p_pv[plant, t] <= round(self.mpc_table.loc[t_d, f"power_{plant}"], 1))
+                        # # Set upper bound to equal of predicted output if PV CANNOT be controlled
+                        # else:
+                        #     model.con_p_pv.add(
+                        #         expr=model.p_pv[plant, t] == round(self.mpc_table.loc[t_d, f"power_{plant}"], 1))
                         model.con_p_pv.add(
                             expr=model.p_pv[plant, t] == round(self.mpc_table.loc[t_d, f"power_{plant}"], 1))
 
-            # not needed
-            # # define wind power upper bound from input file
-            # model.con_p_wind = pyo.ConstraintList()
-            # model.sum_wind = [0] * self.config_dict["mpc_horizon"]
-            #
-            # for plant in self._get_list_plants(plant_type=["wind"]):
-            #     for t, t_d in enumerate(range(self.ts_delivery_current,
-            #                                   self.ts_delivery_current + 900 * self.config_dict["mpc_horizon"], 900)):
-            #         model.sum_wind[t] += self.mpc_table.loc[t_d, f"power_{plant}"]
-            #         if self.plant_dict[plant].get("controllable"):
-            #             model.con_p_wind.add(expr=model.p_wind[plant, t] <= round(self.mpc_table.loc[t_d, f"power_{plant}"], 1))
-            #         else:
-            #             model.con_p_wind.add(expr=model.p_wind[plant, t] == round(self.mpc_table.loc[t_d, f"power_{plant}"], 1))
 
-            # not needed
-            # # define fixedgen power upper bound from input file
-            # model.con_p_fixedgen = pyo.ConstraintList()
-            # model.sum_fixedgen = [0] * self.config_dict["mpc_horizon"]
-            # for fixedgen in self._get_list_plants(plant_type="fixedgen"):
-            #     for t, t_d in enumerate(range(self.ts_delivery_current,
-            #                                   self.ts_delivery_current + 900 * self.config_dict["mpc_horizon"], 900)):
-            #         model.sum_fixedgen[t] += self.mpc_table.loc[t_d, f"power_{fixedgen}"]
-            #         if self.plant_dict[fixedgen].get("controllable"):
-            #             model.con_p_fixedgen.add(expr=model.p_fixedgen[fixedgen, t]
-            #                                           <= self.mpc_table.loc[t_d, f"power_{fixedgen}"])
-            #         else:
-            #             model.con_p_fixedgen.add(expr=model.p_fixedgen[fixedgen, t]
-            #                                           == self.mpc_table.loc[t_d, f"power_{fixedgen}"])
+                # not needed
+                # # define wind power upper bound from input file
+                # model.con_p_wind = pyo.ConstraintList()
+                # model.sum_wind = [0] * self.config_dict["mpc_horizon"]
+                #
+                # for plant in self._get_list_plants(plant_type=["wind"]):
+                #     for t, t_d in enumerate(range(self.ts_delivery_current,
+                #                                   self.ts_delivery_current + 900 * self.config_dict["mpc_horizon"], 900)):
+                #         model.sum_wind[t] += self.mpc_table.loc[t_d, f"power_{plant}"]
+                #         if self.plant_dict[plant].get("controllable"):
+                #             model.con_p_wind.add(expr=model.p_wind[plant, t] <= round(self.mpc_table.loc[t_d, f"power_{plant}"], 1))
+                #         else:
+                #             model.con_p_wind.add(expr=model.p_wind[plant, t] == round(self.mpc_table.loc[t_d, f"power_{plant}"], 1))
 
-            # Add the constraints for heat pump
-            model.con_hp = pyo.ConstraintList()
-            # Loop through all HPs
-            for hp in self._get_list_plants(plant_type="hp"):
-                # Load heat pump cop timeseries
-                hp_cop = self.mpc_table[f"cop_{hp}"].values
-                # Get maximum power values (in negative as it consumes power and does not feed in)
-                hp_p = [self.plant_dict[hp]['power'] * -2] * len(hp_cop)
-                if hp_p == 0:
-                    raise Warning(f'Something is wrong with {self.path}')
+                # not needed
+                # # define fixedgen power upper bound from input file
+                # model.con_p_fixedgen = pyo.ConstraintList()
+                # model.sum_fixedgen = [0] * self.config_dict["mpc_horizon"]
+                # for fixedgen in self._get_list_plants(plant_type="fixedgen"):
+                #     for t, t_d in enumerate(range(self.ts_delivery_current,
+                #                                   self.ts_delivery_current + 900 * self.config_dict["mpc_horizon"], 900)):
+                #         model.sum_fixedgen[t] += self.mpc_table.loc[t_d, f"power_{fixedgen}"]
+                #         if self.plant_dict[fixedgen].get("controllable"):
+                #             model.con_p_fixedgen.add(expr=model.p_fixedgen[fixedgen, t]
+                #                                           <= self.mpc_table.loc[t_d, f"power_{fixedgen}"])
+                #         else:
+                #             model.con_p_fixedgen.add(expr=model.p_fixedgen[fixedgen, t]
+                #                                           == self.mpc_table.loc[t_d, f"power_{fixedgen}"])
 
-                # Add the electric and thermal power constraints
-                for t, t_d in enumerate(range(self.ts_delivery_current,
-                                              self.ts_delivery_current + 900 * self.config_dict["mpc_horizon"], 900)):
-                    # model.con_hp.add(expr=model.p_hp[hp, t] <= hp_p[t] * model.p_hp_milp[hp, t])
-                    model.con_hp.add(expr=model.p_hp[hp, t] >= hp_p[t])  # greater (>=) as power is negative
-                    model.con_hp.add(
-                        expr=model.q_hp[hp, t] == -1 * hp_cop[t] * model.p_hp[hp, t])  # positive (producer)
+                # Add the constraints for heat pump
+                model.con_hp = pyo.ConstraintList()
+                # Loop through all HPs
+                for hp in self._get_list_plants(plant_type="hp"):
+                    # Load heat pump cop timeseries
+                    hp_cop = self.mpc_table[f"cop_{hp}"].values
+                    # Get maximum power values (in negative as it consumes power and does not feed in)
+                    hp_p = [self.plant_dict[hp]['power'] * -factor] * len(hp_cop)
+                    # Add the electric and thermal power constraints
+                    for t, t_d in enumerate(range(self.ts_delivery_current,
+                                                  self.ts_delivery_current + 900 * self.config_dict["mpc_horizon"], 900)):
+                        # model.con_hp.add(expr=model.p_hp[hp, t] <= hp_p[t] * model.p_hp_milp[hp, t])
+                        model.con_hp.add(expr=model.p_hp[hp, t] >= hp_p[t])  # greater (>=) as power is negative
+                        model.con_hp.add(
+                            expr=model.q_hp[hp, t] == -1 * hp_cop[t] * model.p_hp[hp, t])  # positive (producer)
 
-            # Add constraint that the SoC of each time step needs to be the SoC of the previous one plus the charge and
-            #   minus the discharge
-            model.con_tes_soc_calc = pyo.ConstraintList()
-            model.con_tes_bin = pyo.ConstraintList()
-            # Loop through all HPs (for connected thermal storage)
-            for hp in self._get_list_plants(plant_type="hp"):
-                n_tes = self.plant_dict[hp]["efficiency"]  # charge/discharge efficiency
-                with open(f"{self.path}/soc_{hp}.json", "r") as read_file:
-                    soc_tes_init = json.load(read_file)
-                model.con_tes_soc_calc.add(expr=soc_tes_init
-                                                - 0.25 * model.q_tes_out[hp, 0] / n_tes
-                                                + 0.25 * model.q_tes_in[hp, 0] * n_tes
-                                                == model.soc_tes[hp, 0])
-                for t in range(1, self.config_dict["mpc_horizon"]):
-                    model.con_tes_soc_calc.add(expr=model.soc_tes[hp, t - 1]
-                                                    - 0.25 * model.q_tes_out[hp, t] / n_tes
-                                                    + 0.25 * model.q_tes_in[hp, t] * n_tes
-                                                    == model.soc_tes[hp, t])
+                # Add constraint that the SoC of each time step needs to be the SoC of the previous one plus the charge and
+                #   minus the discharge
+                model.con_tes_soc_calc = pyo.ConstraintList()
+                model.con_tes_bin = pyo.ConstraintList()
+                # Loop through all HPs (for connected thermal storage)
+                for hp in self._get_list_plants(plant_type="hp"):
+                    n_tes = self.plant_dict[hp]["efficiency"]  # charge/discharge efficiency
+                    with open(f"{self.path}/soc_{hp}.json", "r") as read_file:
+                        soc_tes_init = json.load(read_file)
+                    model.con_tes_soc_calc.add(expr=soc_tes_init
+                                                    - 0.25 * model.q_tes_out[hp, 0] / n_tes
+                                                    + 0.25 * model.q_tes_in[hp, 0] * n_tes
+                                                    == model.soc_tes[hp, 0])
+                    for t in range(1, self.config_dict["mpc_horizon"]):
+                        model.con_tes_soc_calc.add(expr=model.soc_tes[hp, t - 1]
+                                                        - 0.25 * model.q_tes_out[hp, t] / n_tes
+                                                        + 0.25 * model.q_tes_in[hp, t] * n_tes
+                                                        == model.soc_tes[hp, t])
 
-                # Add constraint that TES can either only charge or discharge
-                for t in range(self.config_dict["mpc_horizon"]):
-                    model.con_tes_bin.add(expr=model.q_tes_in[hp, t] <= 1000000 * (1 - model.q_tes_milp[hp, t]))
-                    model.con_tes_bin.add(expr=model.q_tes_out[hp, t] <= 1000000 * model.q_tes_milp[hp, t])
+                    # Add constraint that TES can either only charge or discharge
+                    for t in range(self.config_dict["mpc_horizon"]):
+                        model.con_tes_bin.add(expr=model.q_tes_in[hp, t] <= 1000000 * (1 - model.q_tes_milp[hp, t]))
+                        model.con_tes_bin.add(expr=model.q_tes_out[hp, t] <= 1000000 * model.q_tes_milp[hp, t])
 
-            # Limit battery charging to pv generation
-            model.con_batt_charge_grid = pyo.ConstraintList()
-            for t in range(0, self.config_dict["mpc_horizon"]):
-                expr_left = 0
-                expr_right = model.sum_pv[t]  # + model.sum_wind[t]
-                make_const = 0
+                # Limit battery charging to pv generation
+                model.con_batt_charge_grid = pyo.ConstraintList()
+                for t in range(0, self.config_dict["mpc_horizon"]):
+                    expr_left = 0
+                    expr_right = model.sum_pv[t]  # + model.sum_wind[t]
+                    make_const = 0
+                    for bat in self._get_list_plants(plant_type="bat"):
+                        if not self.plant_dict[bat].get("charge_from_grid"):
+                            expr_left += model.p_bat_in[bat, t]
+                            make_const = 1
+                    # If charge_from_grid is False set maximum battery charge to PV generation
+                    if make_const:
+                        model.con_batt_charge_grid.add(expr=(expr_left <= expr_right))  # this is slightly wrong as it
+                        # applies to all batteries regardless of if they all charge from the grid or not
+
+                # define initial battery soc, determined using first term of battery power and battery soc in the prev step
+                model.con_soc_calc = pyo.ConstraintList()
+                # Add constraint that the SoC of each time step needs to be the SoC of the previous one plus the charge and
+                #   minus the discharge
                 for bat in self._get_list_plants(plant_type="bat"):
-                    if not self.plant_dict[bat].get("charge_from_grid"):
-                        expr_left += model.p_bat_in[bat, t]
-                        make_const = 1
-                # If charge_from_grid is False set maximum battery charge to PV generation
-                if make_const:
-                    model.con_batt_charge_grid.add(expr=(expr_left <= expr_right))  # this is slightly wrong as it
-                    # applies to all batteries regardless of if they all charge from the grid or not
+                    n_bat = self.plant_dict[bat]["efficiency"]
+                    with open(f"{self.path}/soc_{bat}.json", "r") as read_file:
+                        soc_bat_init = json.load(read_file)
+                    model.con_soc_calc.add(expr=soc_bat_init
+                                                - 0.25 * model.p_bat_out[bat, 0] / n_bat
+                                                + 0.25 * model.p_bat_in[bat, 0] * n_bat
+                                                == model.soc_bat[bat, 0])
+                    for t in range(1, self.config_dict["mpc_horizon"]):
+                        model.con_soc_calc.add(expr=model.soc_bat[bat, t - 1]
+                                                    - 0.25 * model.p_bat_out[bat, t] / n_bat
+                                                    + 0.25 * model.p_bat_in[bat, t] * n_bat
+                                                    == model.soc_bat[bat, t])
 
-            # define initial battery soc, determined using first term of battery power and battery soc in the prev step
-            model.con_soc_calc = pyo.ConstraintList()
-            # Add constraint that the SoC of each time step needs to be the SoC of the previous one plus the charge and
-            #   minus the discharge
-            for bat in self._get_list_plants(plant_type="bat"):
-                n_bat = self.plant_dict[bat]["efficiency"]
-                with open(f"{self.path}/soc_{bat}.json", "r") as read_file:
-                    soc_bat_init = json.load(read_file)
-                model.con_soc_calc.add(expr=soc_bat_init
-                                            - 0.25 * model.p_bat_out[bat, 0] / n_bat
-                                            + 0.25 * model.p_bat_in[bat, 0] * n_bat
-                                            == model.soc_bat[bat, 0])
-                for t in range(1, self.config_dict["mpc_horizon"]):
-                    model.con_soc_calc.add(expr=model.soc_bat[bat, t - 1]
-                                                - 0.25 * model.p_bat_out[bat, t] / n_bat
-                                                + 0.25 * model.p_bat_in[bat, t] * n_bat
-                                                == model.soc_bat[bat, t])
+                # Heat balance
+                if self._get_list_plants(plant_type="hp"):
+                    model.con_heat_balance = pyo.ConstraintList()
+                    # Loop through all time steps
+                    for _t in range(self.config_dict["mpc_horizon"]):
+                        heat_gen = 0  # generation (all positive)
+                        heat_load = q_load[_t]  # load (all negative)
+                        for _hp in self._get_list_plants(plant_type="hp"):
+                            heat_load -= model.q_tes_in[_hp, _t]  # subtract
+                            heat_gen += model.q_hp[_hp, _t] + model.q_tes_out[_hp, _t]
+                        # Load + generation needs to equal zero
+                        model.con_heat_balance.add(expr=(0 == heat_load + heat_gen))
 
-            # Heat balance
-            if self._get_list_plants(plant_type="hp"):
-                model.con_heat_balance = pyo.ConstraintList()
+                # Power balance
+                model.con_balance = pyo.ConstraintList()
                 # Loop through all time steps
                 for _t in range(self.config_dict["mpc_horizon"]):
-                    heat_gen = 0  # generation (all positive)
-                    heat_load = q_load[_t]  # load (all negative)
+                    power_gen = model.p_grid_in[_t]  # generation (all positive)
+                    power_load = p_load[_t] - model.p_grid_out[_t]  # load (all negative)
+                    # Add PV generation
+                    for _pv in self._get_list_plants(plant_type="pv"):
+                        power_gen += model.p_pv[_pv, _t]
+                    # for _wind in self._get_list_plants(plant_type="wind"):
+                    #     power_gen += model.p_wind[_wind, _t]
+                    for _bat in self._get_list_plants(plant_type="bat"):
+                        power_gen += model.p_bat_out[_bat, _t]
+                        power_load -= model.p_bat_in[_bat, _t]
+                    for _ev in self._get_list_plants(plant_type="ev"):
+                        power_gen += model.p_ev_out[_ev, _t]
+                        power_load -= model.p_ev_in[_ev, _t]
+                    # for _fixedgen in self._get_list_plants(plant_type="fixedgen"):
+                    #     power_gen += model.p_fixedgen[_fixedgen, _t]
                     for _hp in self._get_list_plants(plant_type="hp"):
-                        heat_load -= model.q_tes_in[_hp, _t]  # subtract
-                        heat_gen += model.q_hp[_hp, _t] + model.q_tes_out[_hp, _t]
+                        power_load += model.p_hp[_hp, _t]
                     # Load + generation needs to equal zero
-                    model.con_heat_balance.add(expr=(0 == heat_load + heat_gen))
+                    model.con_balance.add(expr=(0 == power_load + power_gen))
 
-            # Power balance
-            model.con_balance = pyo.ConstraintList()
-            # Loop through all time steps
-            for _t in range(self.config_dict["mpc_horizon"]):
-                power_gen = model.p_grid_in[_t]  # generation (all positive)
-                power_load = p_load[_t] - model.p_grid_out[_t]  # load (all negative)
-                # Add PV generation
-                for _pv in self._get_list_plants(plant_type="pv"):
-                    power_gen += model.p_pv[_pv, _t]
-                # for _wind in self._get_list_plants(plant_type="wind"):
-                #     power_gen += model.p_wind[_wind, _t]
-                for _bat in self._get_list_plants(plant_type="bat"):
-                    power_gen += model.p_bat_out[_bat, _t]
-                    power_load -= model.p_bat_in[_bat, _t]
-                for _ev in self._get_list_plants(plant_type="ev"):
-                    power_gen += model.p_ev_out[_ev, _t]
-                    power_load -= model.p_ev_in[_ev, _t]
-                # for _fixedgen in self._get_list_plants(plant_type="fixedgen"):
-                #     power_gen += model.p_fixedgen[_fixedgen, _t]
-                for _hp in self._get_list_plants(plant_type="hp"):
-                    power_load += model.p_hp[_hp, _t]
-                # Load + generation needs to equal zero
-                model.con_balance.add(expr=(0 == power_load + power_gen))
+                # Get the price forecasts
+                model.price = list(self.mpc_table["price"])  # electricity price
+                model.price_levies_pos = list(self.mpc_table["price_energy_levies_positive"])  # positive levy (feed-in)
+                model.price_levies_neg = list(self.mpc_table["price_energy_levies_negative"])  # negative levy (consumption)
 
-            # Get the price forecasts
-            model.price = list(self.mpc_table["price"])  # electricity price
-            model.price_levies_pos = list(self.mpc_table["price_energy_levies_positive"])  # positive levy (feed-in)
-            model.price_levies_neg = list(self.mpc_table["price_energy_levies_negative"])  # negative levy (consumption)
+                # Define objective function
+                def obj_rule(_model):
+                    step_obj = 0
+                    for j in range(0, self.config_dict["mpc_horizon"]):
+                        # Goal is to minimize the costs
+                        # component 1:   grid feed-in valued at predicted price plus levies (negative costs)
+                        # component 2:   grid consumption valued at predicted price plus levies (positive)
+                        step_obj += _model.p_grid_out[j] * (-_model.price[j] + model.price_levies_pos[j]) \
+                                    + _model.p_grid_in[j] * (_model.price[j] + model.price_levies_neg[j])
 
-            # Define objective function
-            def obj_rule(_model):
-                step_obj = 0
-                for j in range(0, self.config_dict["mpc_horizon"]):
-                    # Goal is to minimize the costs
-                    # component 1:   grid feed-in valued at predicted price plus levies (negative costs)
-                    # component 2:   grid consumption valued at predicted price plus levies (positive)
-                    step_obj = - _model.p_grid_out[j] * (_model.price[j] + model.price_levies_pos[j]) \
-                               + _model.p_grid_in[j] * (_model.price[j] + model.price_levies_neg[j])
-                    # ensure non-degeneracy of the MILP
-                    # cannot be used by GLPK as non-linear objectives cannot be solved
-                    if self.config_dict["solver"] != "glpk":
-                        # Penalty function to ensure convergence
-                        step_obj += 5e-10 * _model.p_grid_out[j] * _model.p_grid_out[j]  # -10 is where its at
-                        step_obj += 5e-10 * _model.p_grid_in[j] * _model.p_grid_in[j]
-                    # legacy check for electric vehicle constraint violation
-                    # for item in self._get_list_plants(plant_type="ev"):
-                    #     step_obj += _model.ev_slack[item, j] * 100000000
-                return step_obj
+                        # ensure non-degeneracy of the MILP
+                        # cannot be used by GLPK as non-linear objectives cannot be solved
+                        if self.config_dict["solver"] != "glpk":
+                            # Penalty function to ensure convergence
+                            step_obj += 5e-10 * _model.p_grid_out[j] * _model.p_grid_out[j]  # -10 is where its at
+                            step_obj += 5e-10 * _model.p_grid_in[j] * _model.p_grid_in[j]
+                        # legacy check for electric vehicle constraint violation
+                        # for item in self._get_list_plants(plant_type="ev"):
+                        #     step_obj += _model.ev_slack[item, j] * 100000000
+                    return step_obj
 
-            ############################################### SOLVE MODEL ###############################################
-            model.objective_fun = pyo.Objective(rule=obj_rule, sense=pyo.minimize)  # minimize costs
-            # model.write('datei_mpc_pre.lp', io_options={'symbolic_solver_labels': True})
-            status = pyo.SolverFactory(self.config_dict["solver"]).solve(model)
+                ############################################### SOLVE MODEL ###############################################
+                model.objective_fun = pyo.Objective(rule=obj_rule, sense=pyo.minimize)  # minimize costs
+                # model.write('datei_mpc_pre.lp', io_options={'symbolic_solver_labels': True})
+                status = pyo.SolverFactory(self.config_dict["solver"]).solve(model)
+                if status.solver.termination_condition != pyo.TerminationCondition.optimal:
+                    factor += 0.25
+                    print(f'MPC: Error in user {self.user_id}. Trying again with factor {factor}.')
+                else:
+                    break
             # # Check if model was solved to optimality
             # model.write('datei.lp', io_options={'symbolic_solver_labels': True})
             if status.solver.termination_condition != pyo.TerminationCondition.optimal:
                 model.write(f'datei_mpc_error_{self.user_id}.lp', io_options={'symbolic_solver_labels': True})
                 print(f"Model was not solved to optimality, but with status {status.solver.termination_condition}")
-                print(f'The culprit was {self.path}')
+                print(f'The culprit was {self.user_id}')
 
             # Update mpc_table with results of model
             dict_mpc_table = self.mpc_table.to_dict()
@@ -1811,10 +1866,10 @@ class Prosumer:
             self.mpc_table = pd.DataFrame.from_dict(dict_mpc_table)
 
 
-        if self.user_id == '0000000004':
-            print(self.user_id)
-            print(self.mpc_table.to_string())
-        exit()
+        #if self.user_id == '0000000004':
+        #    print(self.user_id)
+        #    print(self.mpc_table.to_string())
+        #exit()
 
         ft.write_dataframe(self.mpc_table.reset_index().rename(columns={"index": "timestamp"}),
                            f"{self.path}/controller_mpc.ft")
@@ -2527,6 +2582,7 @@ class Prosumer:
 
         :return:
         """
+
         # generate list of potential bids from MPC results
         # all grid flows are potential bids
 
@@ -2538,9 +2594,9 @@ class Prosumer:
 
         df_potential_bids.rename(columns={f"power_{self.config_dict['id_meter_grid']}": "net_bids"}, inplace=True)
 
-        print(df_potential_bids.to_string())
-        print(len(df_potential_bids))
-        exit()
+        #print(df_potential_bids.to_string())
+        #print(len(df_potential_bids))
+        #exit()
 
         df_potential_bids["net_bids"] = df_potential_bids["net_bids"] - self.matched_bids_by_timestep["net_bids"]
 
@@ -2611,9 +2667,9 @@ class Prosumer:
                 price = int(price)
 
                 # TODO: Take back out again
-                if energy_position > 0:
-                    print(self.user_id)
-                    print(t_s, energy_position, price)
+                #if energy_position > 0:
+                #    print(self.user_id)
+                #    print(t_s, energy_position, price)
 
                 if post_position:
                     dict_positions[db_obj.db_param.ID_USER].append(self.config_dict['id_market_agent'])
@@ -2631,8 +2687,8 @@ class Prosumer:
             db_obj.clear_positions(id_user=self.config_dict['id_market_agent'])
 
         # TODO: Debugging
-        print(self.user_id)
-        print(dict_positions)
+        #print(self.user_id)
+        #print(dict_positions)
 
         if len(dict_positions[db_obj.db_param.ID_USER]) > 0:
             df_bids = pd.DataFrame(dict_positions)

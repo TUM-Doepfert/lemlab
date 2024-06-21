@@ -12,15 +12,21 @@ if __name__ == "__main__":
     #               "countryside/wLEM/Countryside_pv_0.5_hp_0.5_ev_1.0_transition",
     #               "countryside/woLEM/Countryside_pv_0.5_hp_0.5_ev_1.0_transition_woLEM",
     #               ]
-    sim_names = ["countryside/wLEM/Countryside_pv_1.0_hp_0.0_ev_0.0_summer"]
-    sim_names = ["test_sim"]
+    sim_names = [#"countryside/wLEM/Countryside_pv_1.0_hp_1.0_ev_1.0_summer",
+                 #"countryside/woLEM/Countryside_pv_1.0_hp_1.0_ev_1.0_summer_woLEM",
+                 #"countryside/wLEM/Countryside_pv_1.0_hp_1.0_ev_1.0_transition",
+                 #"countryside/woLEM/Countryside_pv_1.0_hp_1.0_ev_1.0_transition_woLEM",
+                 "countryside/woLEM_mpc/Countryside_pv_1.0_hp_1.0_ev_1.0_winter_woLEM_mpc",
+                 #"countryside/woLEM/Countryside_pv_1.0_hp_1.0_ev_1.0_winter_woLEM"
+                 ]
+    #sim_names = ["to_change/Countryside_pv_1.0_hp_1.0_ev_1.0_summer"]
 
     for sim_name in sim_names:
         sim = sim_name.split("/")[-1]
 
         simulation = ScenarioExecutor(path_scenario=f"../scenarios/{sim_name}",
                                       path_results=f"../simulation_results/{sim}")
-        simulation.run(hamlet=False)
+        simulation.run()
 
     # Next steps: Run the simulation and get the controllers and forecasters to work.
 

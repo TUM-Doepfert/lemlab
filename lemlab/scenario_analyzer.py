@@ -181,7 +181,8 @@ class ScenarioAnalyzer:
     def plot_detailed_virtual_feeder_flow(self, limits: list = None, name: str = "power_detailed") -> None:
 
         # Load meter information
-        df_meters = pd.read_csv(f"{self.path_results}/db_snapshot/{db_p.NAME_TABLE_INFO_METER}.csv", index_col=0, dtype={"id_user": str})
+        df_meters = pd.read_csv(f"{self.path_results}/db_snapshot/{db_p.NAME_TABLE_INFO_METER}.csv",
+                            index_col=0, dtype={"id_user": str})
 
         # Group by meter type
         meter_types = df_meters[db_p.INFO_ADDITIONAL].unique()
@@ -193,8 +194,8 @@ class ScenarioAnalyzer:
 
         # Limit the meter readings to the specified limits if available
         if limits:
-            df_meter_readings = df_meter_readings[(limits[0] <= df_meter_readings['ts_delivery'])
-                                                  & (df_meter_readings['ts_delivery'] < limits[1])]
+            df_meter_readings = df_meter_readings[(limits[0] <= df_meter_readings[db_p.TS_DELIVERY])
+                                                  & (df_meter_readings[db_p.TS_DELIVERY] < limits[1])]
 
         # Create new df for the results with the timestamp as index
         df_results = pd.DataFrame(index=df_meter_readings[db_p.TS_DELIVERY].unique())
@@ -233,14 +234,37 @@ class ScenarioAnalyzer:
         # df_results['main'] = df_results[[col for col in df_results.columns if not col.endswith('in')
         #                                     and not col.endswith('out')]].sum(axis=1)
         df_results['main'] = df_results.sum(axis=1)
-        # print(df_results.to_string())
+        # print(df_results.sum().round().astype(int))
 
         # Define labels and colors
-        labels = ["Main meter", "Battery", "EV", "Household", "Heat pump", "PV"]
-        colors = ["0.2", "#ec6a0e", "#2791be", "#a8d277", "#c33528", "#ffd045"]
+        labels_orig = ["Main meter", "Household", "PV", "Battery", "EV", "Heat pump"]
+        colors_orig = ["0.2", "#a8d277", "#ffd045", "#ec6a0e", "#2791be", "#c33528"]
 
-        # labels_opt = ["PV", "Battery", "EV", "Heat pump", "Wind", "Fixed gen"]  # according labels for the devices
-        # colors_opt = ["#ffd045", "#ec6a0e", "#2791be", "#c33528", "#28a9c3", "0.7"]  # according colors for the devices
+        # Create a mapping of column names to labels and colors
+        column_mapping = {
+            'Main meter': 'main',
+            'Household': 'hh',
+            'PV': 'pv',
+            'Battery': 'bat',
+            'EV': 'ev',
+            'Heat pump': 'hp',
+        }
+        # Filter out labels that are not in the dataframe and column_mapping
+        labels = [label for label in labels_orig if label in column_mapping and column_mapping[label] in df_results.columns]
+
+        # Get corresponding colors for labels
+        colors = [colors_orig[labels_orig.index(label)] for label in labels]
+
+        # Reorder the columns of the dataframe to match the desired order of labels
+        cols = [column_mapping[label] for label in labels]
+
+        # # Replace first label with Net flow
+        # labels[0] = "Net flow"
+
+        # Drop main from cols
+        cols.remove('main')
+        df_pos = df_pos[cols]
+        df_neg = df_neg[cols]
 
         # Plots
         scplotter = ScenarioPlotter()
@@ -260,8 +284,12 @@ class ScenarioAnalyzer:
         scplotter.ax.stackplot(xvalues, yvalues, baseline="zero", colors=colors[1:])
         # Figure setup
         xlims = [min(xvalues), max(xvalues)]
-        scplotter.figure_setup(title=f"Detailed powerflow", ylabel="Power (kW)",
+        # ylims = [-1500, 2000]
+        scplotter.figure_setup(title=f"Power flow", ylabel="Power (kW)",
                                legend_labels=labels, xlims=xlims, xticks_style="date")
+        # scplotter.figure_setup(ylabel="Power (kW)",
+        #                        legend_labels=labels, xlims=xlims, xticks_style="date")
+        # plt.ylim(ylims)
         if self.save_figures:
             self.__save_figure(name=name)
         if self.show_figures:
@@ -316,7 +344,7 @@ class ScenarioAnalyzer:
         print("External production")
         print(df_results["grid_prod"].sum())
 
-    def plot_mcp(self, type_market: str = None) -> None:
+    def plot_mcp(self, type_market: str = None, limits: list = None) -> None:
         """checks the market type to be plotted and calls the respective subfunction to plot the weighted average and
         the individual market (if applicable) clearing prices for each time step
 
@@ -340,7 +368,7 @@ class ScenarioAnalyzer:
                         if db_p.PRICE_ENERGY_MARKET_ in column][0]
 
         if "ex_ante" in type_market:
-            self.__mcp_ex_ante(type_market, column_price)
+            self.__mcp_ex_ante(type_market, column_price, limits)
         elif "ex_post" in type_market:
             self.__mcp_ex_post(type_market, column_price)
         else:
@@ -823,7 +851,7 @@ class ScenarioAnalyzer:
         # Price plot (right y-axis)
         yvalues = [x for x in df_results["price_€/kWh"].tolist()]
         scplotter.ax2 = scplotter.ax.twinx()
-        scplotter.ax2.plot(xvalues, yvalues, color="0.2", linewidth=3, alpha=1, label="Price")
+        scplotter.ax2.plot(xvalues, yvalues, color="0.2", alpha=1, label="Price")
         scplotter.ax2.set(ylim=(min(0, round(min(yvalues) * 1.1, 1)), max(0, round(max(yvalues) * 1.1, 1))))
         # Figure setup
         xlims = [min(xvalues), max(xvalues)]
@@ -832,8 +860,8 @@ class ScenarioAnalyzer:
         lines = lines_1 + lines_2
         labels = labels_1 + labels_2
         scplotter.ax.legend(lines, labels, bbox_to_anchor=(0.5, -0.2), ncol=min(4, len(labels)))
-        scplotter.figure_setup(title="MCP vs. energy quality", xlabel="",
-                               ylabel="Energy quality share (%)", ylabel_right="Average MCP (€/kWh)",
+        scplotter.figure_setup(title="Price vs. energy quality", xlabel="",
+                               ylabel="Energy quality share (%)", ylabel_right="Average price (€/kWh)",
                                xlims=xlims, xticks_style="date")
         if self.save_figures:
             self.__save_figure(name=f"price_type_{type_market}")
@@ -938,7 +966,7 @@ class ScenarioAnalyzer:
         df_pos, df_neg = df_user.iloc[:, 4:].clip(lower=0), df_user.iloc[:, 4:].clip(upper=0)
         # Line plot of main meter
         yvalues = df_user.iloc[:, 3].transpose().values.tolist()
-        scplotter.ax.plot(xvalues, yvalues, color=colors[0])
+        scplotter.ax.plot(xvalues, yvalues, color=colors[0], alpha=0.5)
         # Stackplot of submeters (positive values)
         yvalues = df_pos.transpose().values.tolist()
         scplotter.ax.stackplot(xvalues, yvalues, baseline="zero", colors=colors[1:])
@@ -1035,7 +1063,7 @@ class ScenarioAnalyzer:
                          label="Neg. Balancing")
         # Line plot of balance
         yvalues_bal = [yvalue for yvalue in (df_balance[id_user]["balance_€"]).to_list()]
-        scplotter.ax.plot(xvalues, yvalues_bal, color="0.1", linewidth=2)
+        scplotter.ax.plot(xvalues, yvalues_bal, color="0.1")
         # Figure setup
         xlims = [min(xvalues), max(xvalues)]
         labels = ("Balance", "Cost", "Revenue", "Levies", "Pos. Balancing", "Neg. Balancing")
@@ -1046,7 +1074,7 @@ class ScenarioAnalyzer:
         if self.show_figures:
             plt.show()
 
-    def __mcp_ex_ante(self, type_market, column_price) -> None:
+    def __mcp_ex_ante(self, type_market, column_price, limits: list = None) -> None:
         """plots the weighted average and the individual market clearing prices for each time step for ex-ante markets
 
         Args:
@@ -1062,6 +1090,9 @@ class ScenarioAnalyzer:
         df_market_results = pd.read_csv(f"{self.path_results}/db_snapshot/results_market_{type_market}.csv",
                                         index_col=0)
         df_market_results = df_market_results[df_market_results[db_p.TS_DELIVERY] <= self.max_time]
+        if limits:
+            df_market_results = df_market_results[(df_market_results[db_p.TS_DELIVERY] >= limits[0]) &
+                                                  (df_market_results[db_p.TS_DELIVERY] <= limits[1])]
         df_market_results["costs_€"] = df_market_results[db_p.QTY_ENERGY_TRADED] * df_market_results[column_price] * \
                                        self.conv_to_EUR
 
@@ -1076,6 +1107,40 @@ class ScenarioAnalyzer:
         df_results["total_energy_kWh"] = df_temp[db_p.QTY_ENERGY_TRADED] * self.conv_to_kWh
         df_results["avg_price_€/kWh"] = df_results["total_cost_€"] / df_results["total_energy_kWh"]
 
+        print('Ratio of purchased energy via balancing/market trading:')
+        df_transactions = pd.read_csv(f"{self.path_results}/db_snapshot/{db_p.NAME_TABLE_LOGS_TRANSACTIONS}.csv",
+                                      index_col=0)
+        if limits:
+            df_transactions = df_transactions[(df_transactions[db_p.TS_DELIVERY] >= limits[0]) &
+                                              (df_transactions[db_p.TS_DELIVERY] <= limits[1])]
+        df_transactions['ts_delivery'] = pd.to_datetime(df_transactions['ts_delivery'], unit='s')
+        # Sort by time and user
+        df_transactions = df_transactions.sort_values([db_p.TS_DELIVERY, db_p.ID_USER])
+        # Take out retailer
+        df_transactions = df_transactions[df_transactions[db_p.ID_USER] != "retailer01"]
+        # Filter for qty_energy values that have one entry each for market or balancing and levies
+        df_transactions = df_transactions.groupby([db_p.TS_DELIVERY, db_p.ID_USER, db_p.TYPE_TRANSACTION])
+        df_transactions = df_transactions.filter(lambda x: len(x) == 1)
+        # check = df_transactions[(df_transactions['id_user'] == '0000000014')]
+        # print(check.groupby([db_p.TS_DELIVERY, db_p.TYPE_TRANSACTION]).sum().to_string())
+        # exit()
+        # Only consider market and balancing transactions
+        df_transactions = df_transactions[df_transactions[db_p.TYPE_TRANSACTION].isin(["market", "balancing"])]
+        # Split the energy column into positive and negative values
+        df_transactions["energy_pos"] = df_transactions[db_p.QTY_ENERGY].clip(lower=0)
+        df_transactions["energy_neg"] = df_transactions[db_p.QTY_ENERGY].clip(upper=0)
+        # Group by type of transaction and sum up the energy
+        df_transactions = df_transactions.groupby([db_p.TYPE_TRANSACTION]).sum()
+        # Calculate the ratio of balancing to market energy for positive, negative and total energy
+        ratios = {"ratio_buying": df_transactions["energy_pos"]["balancing"] / df_transactions["energy_pos"]["market"],
+                    "ratio_selling": df_transactions["energy_neg"]["balancing"] / df_transactions["energy_neg"]["market"],
+                    "ratio_total": (df_transactions["energy_pos"]["balancing"] + abs(df_transactions["energy_neg"]["balancing"])) /
+                                    (df_transactions["energy_pos"]["market"] + abs(df_transactions["energy_neg"]["market"]))}
+
+        # for key, value in ratios.items():
+        #     print(f"{key}: {round(value, 3)}")
+        # exit()
+
         # Plots
 
         # Plot: Weighted average
@@ -1088,7 +1153,7 @@ class ScenarioAnalyzer:
         xvalues = df_market_results.ts_delivery
         yvalues = (df_market_results[column_price] * self.conv_to_EUR / self.conv_to_kWh).\
             tolist()
-        scplotter.ax.scatter(xvalues, yvalues, color="#369f28", alpha=0.3, sizes=np.ones(len(xvalues)) * 5)
+        # scplotter.ax.scatter(xvalues, yvalues, color="#369f28", alpha=0.3, sizes=np.ones(len(xvalues)) * 5)
         # Figure setup
         xlims = [min(xvalues), max(xvalues)]
         scplotter.figure_setup(title="Market clearing prices (ex-ante)", ylabel="Market clearing price (€/kWh)",

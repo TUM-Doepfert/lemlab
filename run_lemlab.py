@@ -9,6 +9,7 @@ from tqdm import tqdm
 import logging
 import traceback
 import datetime
+import sys
 
 # Configure the logging module
 logging.basicConfig(
@@ -26,6 +27,8 @@ def main(lemlab_scenario: str = './scenarios', lemlab_results: str = './simulati
     # Get a list of all scenarios to simulate
     scenarios = next(os.walk(lemlab_scenario))[1]
     num_scenarios = len(scenarios)
+
+
 
     # Prepare the progressbar
     pbar = tqdm(total=len(scenarios), unit='scenario')
@@ -75,11 +78,13 @@ def main(lemlab_scenario: str = './scenarios', lemlab_results: str = './simulati
         pbar.set_description(string)
 
         try:
+            sys.stdout = open(os.devnull, 'w')  # deactivate printing
             # Create a scenario executor
             simulation = ScenarioExecutor(path_scenario=os.path.join(lemlab_scenario, scenario),
                                           path_results=os.path.join(lemlab_results, scenario))
             # Run the scenario
             simulation.run()
+            sys.stdout = sys.__stdout__  # reactivate printing
         except Exception as e:
             # Send a message with scenario and current time (H:M:S)
             string = f'{MACHINE}: ERROR in {scenario} at {time.strftime("%H:%M:%S | %d.%m.%Y")} \n' \

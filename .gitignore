@@ -1,7 +1,7 @@
 .idea
-**/input_data
-**/scenarios
-**/simulation_results
+input_data/*
+scenarios/*
+simulation_results/*
 **/results
 **/__pycache__
-**/xx_publication_materials
+/xx_publication_materials/
