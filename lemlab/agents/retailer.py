@@ -116,7 +116,7 @@ class Retailer:
             dict_positions[db_obj.db_param.QTY_ENERGY].append(quantity)
 
             # Values that are same for all position types
-            dict_positions[db_obj.db_param.ID_USER].append(self.config_dict["id_market_agent"])
+            dict_positions[db_obj.db_param.ID_USER].append(self.config_dict["id_user"])
             dict_positions[db_obj.db_param.NUMBER_POSITION].append(0)
             dict_positions[db_obj.db_param.STATUS_POSITION].append(0)
             dict_positions[db_obj.db_param.QUALITY_ENERGY].append(self.config_dict["quality"])

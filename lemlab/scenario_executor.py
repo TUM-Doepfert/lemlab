@@ -96,7 +96,7 @@ class ScenarioExecutor:
         self.db_conn_user = None
         self.config = None
 
-    def run(self) -> None:
+    def run(self, hamlet: bool = True) -> None:
         """
         Sets up and runs the simulation according to the config yaml. In the case of real-time
         emulation, the emulation must be manually ended using end_execution()
@@ -105,7 +105,10 @@ class ScenarioExecutor:
         """
         self.__prepare_execution()
 
-        self.__execute()
+        if hamlet:
+            self.__execute_hamlet()
+        else:
+            self.__execute()
 
         self.__end_execution()
 
@@ -147,7 +150,7 @@ class ScenarioExecutor:
             db_dict=self.config["db_connections"]["database_connection_user"],
             lem_config=self.config["lem"])
 
-        self.__execute()
+        self.__execute_hamlet()
 
         self.__end_execution()
 
@@ -499,7 +502,7 @@ class ScenarioExecutor:
         self.db_conn_admin.register_user(pd.DataFrame().from_dict(dict_user))
 
     # simulation execution
-    def __execute(self):
+    def __execute_hamlet(self, show_pbar: bool = False, par_markets: bool = True):
         path_weather = f"{self.path_results}/weather/weather.ft"
         # choose execution mode: "real-time" or normal simulation
         if self.config["simulation"]["rts"] is True:
@@ -582,6 +585,157 @@ class ScenarioExecutor:
             # configure progress bar
             str_len = 42
             simulation_length = int((ts_delivery_end - ts_delivery_start) / 900 + 1)
+            if show_pbar:
+                pbar = tqdm(range(simulation_length), total=simulation_length)
+
+            # set up multiprocessing pool for prosumer functionality
+            # pre-clearing activity is computationally intensive, as it contains utilities and optimization
+
+            # number of parallel processes should not exceed the number of prosumers being simulated
+            # initializing processes is expensive
+            num_par_processes = min(len(self.__get_active_prosumers()), mp.cpu_count())
+            # num_par_processes = 32
+
+            with mp.Pool(initializer=_par_step_init,
+                         initargs=(_par_step,
+                                   self.config,
+                                   path_weather),
+                         processes=num_par_processes
+                         ) as pool:
+                # main simulation loop, step from ts_delivery start to end
+                while ts_delivery_current <= ts_delivery_end:
+                    # at one minute past the quarter-hour:
+                    self.t_now = ts_delivery_current + 60
+
+                    # set new label on progress bar
+                    if show_pbar:
+                        str_time = \
+                            f"Simulating timestep #{self.step_counter} at " \
+                            f"{pd.Timestamp(ts_delivery_current, unit='s', tz=self.config['simulation']['sim_start_tz'])}"
+                        pbar.set_description(f"{str_time}: {'Forecasting and posting by market agents'.ljust(str_len)}")
+
+                    # perform pre-clearing activities for prosumers, aggregators, retailer
+                    # pre-clearing includes real-time controllers, logging of meter values, utilities,
+                    # model predictive control and posting bids to the market
+                    pool.map(_par_step,
+                             self.__gen_par_step_prosumers_pre_input())
+                    self.__step_aggregator_pre()
+                    self.__step_retailer_pre()
+
+                    self.t_now = ts_delivery_current + 900 - 5 * 60
+                    # at five minutes before the end of the quarter hour:
+                    # 1: market clearing (if ex-ante market) and market settlement
+                    if show_pbar:
+                        pbar.set_description(f"{str_time}: {'Market clearing and settlement'.ljust(str_len)}")
+                    if par_markets:
+                        bids, offers = self.__step_lem_pre()  # previously in step_lem but moved here to allow for parallelization
+                        results = pool.map(_par_step,
+                                           self.__gen_par_step_lem_input(bids, offers))
+                        # print(results)
+                        self.__step_lem_post(results)  # previously in step_lem but moved here to allow for parallelization
+                    else:
+                        self.__step_lem()
+                    # 2: prosumers check market results
+                    if show_pbar:
+                        pbar.set_description(f"{str_time}: {'Checking of market results'.ljust(str_len)}")
+                        pbar.update()
+                    self.__step_prosumers_post()
+                    # increment ts_delivery and step_counter
+                    ts_delivery_current += 900
+                    self.step_counter += 1
+                    # end of main while loop
+            # after main simulation completed
+            if show_pbar:
+                pbar.set_description("Computation finished and results saved")  # update progress bar
+                pbar.close()        # close progress bar
+            pool.close()        # close parallel pool
+        else:
+            print("Error: parameter 'simulation' 'real-time' must be True or False")
+
+    # original
+    def __execute(self):
+        path_weather = f"{self.path_results}/weather/weather.ft"
+        # choose execution mode: "real-time" or normal simulation
+        if self.config["simulation"]["rts"] is True:
+            with open(f"{self.path_results}/sim_info.json", "r") as read_file:
+                dict_sim = json.load(read_file)
+
+            if dict_sim["ts_delivery"] is not None:
+                ts_delivery_start = dict_sim["ts_delivery"]
+            else:
+                ts_delivery_start = self.t_now - self.t_now % 900 + 900
+
+            # simulation time range is set here. The simulation runs from now until the end of UNIX time, unless stopped
+            # by the end_execution() method
+            ts_delivery_end = (2 ** 31) - 1
+            ts_delivery_current = ts_delivery_start
+            # configure progress bar
+            pbar = tqdm(bar_format="{desc}")
+            # endless while loop, unless ended by the quit_sim flag through end_execution()
+            while ts_delivery_current <= ts_delivery_end:
+                # update progress bar
+                with open(f"{self.path_results}/sim_info.json", "r") as read_file:
+                    dict_sim = json.load(read_file)
+                dict_sim["ts_delivery"] = ts_delivery_current
+                with open(f"{self.path_results}/sim_info.json", "w+") as write_file:
+                    json.dump(dict_sim, write_file)
+
+                self.__wait_for_time(target_time=ts_delivery_current + 60,
+                                     progress_bar=pbar,
+                                     reason=f" to execute market agents... ")
+
+                self.t_now = round(time.time())
+                if self.t_now > ts_delivery_current + 900:
+                    self.t_now = ts_delivery_current + 60
+
+                # do pre clearing things for prosumers and aggregators
+                self.__step_prosumers_pre()
+                self.__step_aggregator_pre()
+                self.__step_retailer_pre()
+
+                self.__wait_for_time(target_time=ts_delivery_current + 10 * 60,
+                                     progress_bar=pbar,
+                                     reason=f" to clear and settle the market... ")
+
+                # at five minutes before delivery:
+                # 1: if ex_ante, clear the market, then settle the previous steps
+                # 2: if ex_post, settle previous steps
+
+                self.t_now = round(time.time())
+                if self.t_now > ts_delivery_current + 900:
+                    self.t_now = ts_delivery_current + 10 * 60
+
+                pbar.set_description_str(
+                    f"{pd.Timestamp(self.t_now, unit='s', tz=self.config['simulation']['sim_start_tz'])}:"
+                    f" market clearing and settlement")
+
+                self.__step_lem()
+
+                pbar.set_description_str(
+                    f"{pd.Timestamp(self.t_now, unit='s', tz=self.config['simulation']['sim_start_tz'])}:"
+                    f" agents retrieving market results")
+                self.__step_prosumers_post()
+
+                with open(f"{self.path_results}/sim_info.json", "r") as read_file:
+                    dict_sim = json.load(read_file)
+                dict_sim["ts_delivery"] = ts_delivery_current
+                with open(f"{self.path_results}/sim_info.json", "w+") as write_file:
+                    json.dump(dict_sim, write_file)
+
+                ts_delivery_current += 900
+                self.step_counter += 1
+
+        elif self.config["simulation"]["rts"] is not True:
+            # simulation time range is set here, as defined in the config YAML
+
+            ts_delivery_start = pd.Timestamp(self.config["simulation"]["sim_start"],
+                                             tz=self.config["simulation"]["sim_start_tz"]).timestamp()
+            ts_delivery_end = ts_delivery_start + self.config["simulation"]["sim_length"] * 86400
+            ts_delivery_current = int(ts_delivery_start)
+
+            # configure progress bar
+            str_len = 42
+            simulation_length = int((ts_delivery_end - ts_delivery_start) / 900 + 1)
             pbar = tqdm(range(simulation_length), total=simulation_length)
 
             # set up multiprocessing pool for prosumer functionality
@@ -631,8 +785,8 @@ class ScenarioExecutor:
                     # end of main while loop
             # after main simulation completed
             pbar.set_description("Computation finished and results saved")  # update progress bar
-            pbar.close()        # close progress bar
-            pool.close()        # close parallel pool
+            pbar.close()  # close progress bar
+            pool.close()  # close parallel pool
         else:
             print("Error: parameter 'simulation' 'real-time' must be True or False")
 
@@ -676,7 +830,7 @@ class ScenarioExecutor:
         executed for each.
 
         Used for real-time emulations only, as simulations are conducted using
-        scenario_executor._par_step_prosumers_pre().
+        scenario_executor._par_step().
 
         :param: None
 
@@ -689,7 +843,7 @@ class ScenarioExecutor:
 
     def __gen_par_step_prosumers_pre_input(self):
         """
-        Prepares a list of inputs for scenario_executor._par_step_prosumers_pre().
+        Prepares a list of inputs for scenario_executor._par_step().
         Performs pre-clearing activities for all prosumers in the simulation.
         New instances are instantiated and prosumer.pre_clearing_activity() is
         executed for each.
@@ -772,6 +926,235 @@ class ScenarioExecutor:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 clearing_ex_ante.market_clearing(db_obj=self.db_conn_admin,
+                                                 config_lem=self.config["lem"],
+                                                 t_override=self.t_now)
+        # if ex-post markets are to be calculated, this is done here
+        # if self.config["lem"]["types_clearing_ex_post"]:
+        #     lem_settlement.set_community_price(db_obj=self.db_conn_admin,
+        #                                        path_simulation=self.path_results,
+        #                                        lem_config=self.config["lem"],
+        #                                        list_ts_delivery=list_ts_delivery_ready)
+
+        # final transaction settlement is performed now
+        # only one market can be settled. This is the first ex-ante market listed,
+        # if none is listed, the first ex-post is chosen
+        if self.config["lem"]["types_clearing_ex_ante"]:
+            # determine balancing energy flows
+            lem_settlement.determine_balancing_energy(db_obj=self.db_conn_admin,
+                                                      list_ts_delivery=list_ts_delivery_ready)
+            # settle balancing energy costs with each user, trading costs were cleared in clearing_ex_ante.py
+            lem_settlement.update_balance_balancing_costs(db_obj=self.db_conn_admin,
+                                                          list_ts_delivery=list_ts_delivery_ready,
+                                                          lem_config=self.config["lem"],
+                                                          t_now=self.t_now,
+                                                          id_retailer=self.config["retailer"]["id_user"])
+        else:
+            lem_settlement.update_balance_ex_post(db_obj=self.db_conn_admin,
+                                                  id_retailer=self.config["retailer"]["id_user"],
+                                                  lem_config=self.config["lem"],
+                                                  list_ts_delivery=list_ts_delivery_ready,
+                                                  t_now=self.t_now)
+        # levy costs are determined based on
+        # settle levy costs with each user
+        lem_settlement.update_balance_levies(db_obj=self.db_conn_admin,
+                                             list_ts_delivery=list_ts_delivery_ready,
+                                             lem_config=self.config["lem"],
+                                             t_now=self.t_now,
+                                             id_retailer=self.config["retailer"]["id_user"])
+
+        # initialize new settlement status for current ts_delivery
+        for ts_d in list_ts_delivery_ready:
+            dict_status = {
+                self.db_conn_admin.db_param.TS_DELIVERY: [ts_d],
+                self.db_conn_admin.db_param.STATUS_METER_READINGS_PROCESSED: [1],
+                self.db_conn_admin.db_param.STATUS_SETTLEMENT_COMPLETE: [1]
+            }
+            self.db_conn_admin.set_status_settlement(pd.DataFrame().from_dict(dict_status))
+
+    def __step_lem_pre(self) -> tuple:
+        """
+        Performs market clearing and market settlement according to the simulation config YAML.
+
+        All market types listed in the config are calculated and cleared. If no ex-ante markets
+        are configured, the first ex-post pricing and clearing will be used for settlement.
+
+        Otherwise, the first ex-ante clearing and price types will be used for settlement.
+
+        :param: None
+
+        :return: None
+        """
+
+        # initialize new settlement status for current ts_delivery
+        dict_status = {
+            self.db_conn_admin.db_param.TS_DELIVERY: [self.t_now - self.t_now % 900],
+            self.db_conn_admin.db_param.STATUS_METER_READINGS_PROCESSED: [0],
+            self.db_conn_admin.db_param.STATUS_SETTLEMENT_COMPLETE: [0]
+        }
+        self.db_conn_admin.set_status_settlement(pd.DataFrame().from_dict(dict_status))
+
+        # check for which ts_delivery ALL meter readings have been logged, calculate energy deltas for each meter
+        # label processed steps in status_settlement
+        lem_settlement.update_complete_meter_readings(db_obj=self.db_conn_admin)
+
+        # set settlement prices for current simulation ts_delivery in database, as agents need these for their naive
+        # forecasts
+        lem_settlement.set_prices_settlement(db_obj=self.db_conn_admin,
+                                             path_simulation=self.path_results,
+                                             list_ts_delivery=[self.t_now - self.t_now % 900])
+
+        bids, offers = clearing_ex_ante.market_clearing_par_pre(db_obj=self.db_conn_admin,
+                                                                config_lem=self.config["lem"])
+
+        return bids, offers
+
+    # def __step_lem(self) -> None:
+    #     """
+    #     Performs market clearing and market settlement according to the simulation config YAML.
+    #
+    #     All market types listed in the config are calculated and cleared. If no ex-ante markets
+    #     are configured, the first ex-post pricing and clearing will be used for settlement.
+    #
+    #     Otherwise, the first ex-ante clearing and price types will be used for settlement.
+    #
+    #     :param: None
+    #
+    #     :return: None
+    #     """
+    #
+    #     # if ex-ante market selected, clear market
+    #     if self.config["lem"]["types_clearing_ex_ante"]:
+    #         with warnings.catch_warnings():
+    #             warnings.simplefilter("ignore")
+    #             clearing_ex_ante.market_clearing_par(db_obj=self.db_conn_admin,
+    #                                              config_lem=self.config["lem"],
+    #                                              t_override=self.t_now)
+    #     else:
+    #         raise Warning('No ex-ante market selected. No clearing performed.')
+
+    def __gen_par_step_lem_input(self, bids, offers):
+        """
+        Prepares a list of inputs for scenario_executor._par_step_lem().
+        """
+
+        config_lem = self.config["lem"]
+
+        # Calculate number of market clearings
+        n_clearings = int(config_lem['horizon_clearing'] / config_lem['interval_clearing'])
+
+        # generate input list for parallel processing of prosumers
+        # Set first clearing interval to next clearing interval period (ceil up to next clearing interval)
+        t_clearing_first = self.t_now - (self.t_now % config_lem['interval_clearing']) + config_lem['interval_clearing']
+
+        # Go through all specified number of clearings
+        iterations = range(n_clearings)
+
+        list_par_inputs = []
+
+        # Continuous clearing time, incrementing by market period
+        for i in iterations:
+            info = {
+                't_clear': t_clearing_first + config_lem['interval_clearing'] * i,
+                'bids': bids,
+                'offers': offers,
+            }
+            list_par_inputs.append(info)
+
+        return list_par_inputs
+
+    def __step_lem_post(self, results: list) -> None:
+        """
+        Performs market clearing and market settlement according to the simulation config YAML.
+
+        All market types listed in the config are calculated and cleared. If no ex-ante markets
+        are configured, the first ex-post pricing and clearing will be used for settlement.
+
+        Otherwise, the first ex-ante clearing and price types will be used for settlement.
+
+        :param: None
+
+        :return: None
+        """
+
+        # log transactions in database
+        clearing_ex_ante.market_clearing_par_post(db_obj=self.db_conn_admin,
+                                                  config_lem=self.config["lem"],
+                                                  positions_cleared=results)
+
+        # generate list of ts_delivery that are ready to be settled (i.e. (his means meter readings have been processed)
+        list_ts_delivery_ready = lem_settlement.get_list_ts_delivery_ready(db_obj=self.db_conn_admin)
+        # in some simulations, some plant have no physical meters. Their power flow must be implicitly calculated and
+        # assigned to a virtual meter.
+
+        # determine balancing energy flows
+        lem_settlement.determine_balancing_energy(db_obj=self.db_conn_admin,
+                                                  list_ts_delivery=list_ts_delivery_ready)
+        # settle balancing energy costs with each user, trading costs were cleared in clearing_ex_ante.py
+        lem_settlement.update_balance_balancing_costs(db_obj=self.db_conn_admin,
+                                                      list_ts_delivery=list_ts_delivery_ready,
+                                                      lem_config=self.config["lem"],
+                                                      t_now=self.t_now,
+                                                      id_retailer=self.config["retailer"]["id_user"])
+
+        # levy costs are determined based on
+        # settle levy costs with each user
+        lem_settlement.update_balance_levies(db_obj=self.db_conn_admin,
+                                             list_ts_delivery=list_ts_delivery_ready,
+                                             lem_config=self.config["lem"],
+                                             t_now=self.t_now,
+                                             id_retailer=self.config["retailer"]["id_user"])
+
+        # initialize new settlement status for current ts_delivery
+        for ts_d in list_ts_delivery_ready:
+            dict_status = {
+                self.db_conn_admin.db_param.TS_DELIVERY: [ts_d],
+                self.db_conn_admin.db_param.STATUS_METER_READINGS_PROCESSED: [1],
+                self.db_conn_admin.db_param.STATUS_SETTLEMENT_COMPLETE: [1]
+            }
+            self.db_conn_admin.set_status_settlement(pd.DataFrame().from_dict(dict_status))
+
+    def __step_lem_backup(self) -> None:
+        """
+        Performs market clearing and market settlement according to the simulation config YAML.
+
+        All market types listed in the config are calculated and cleared. If no ex-ante markets
+        are configured, the first ex-post pricing and clearing will be used for settlement.
+
+        Otherwise, the first ex-ante clearing and price types will be used for settlement.
+
+        :param: None
+
+        :return: None
+        """
+        # initialize new settlement status for current ts_delivery
+        dict_status = {
+            self.db_conn_admin.db_param.TS_DELIVERY: [self.t_now - self.t_now % 900],
+            self.db_conn_admin.db_param.STATUS_METER_READINGS_PROCESSED: [0],
+            self.db_conn_admin.db_param.STATUS_SETTLEMENT_COMPLETE: [0]
+        }
+        self.db_conn_admin.set_status_settlement(pd.DataFrame().from_dict(dict_status))
+
+        # check for which ts_delivery ALL meter readings have been logged, calculate energy deltas for each meter
+        # label processed steps in status_settlement
+        lem_settlement.update_complete_meter_readings(db_obj=self.db_conn_admin)
+
+        # set settlement prices for current simulation ts_delivery in database, as agents need these for their naive
+        # forecasts
+        # TODO: adjust agent forecasts so this step is unnecessary
+        # TODO: add option of posting settlement prices in advance, useful for time-varying tariffs
+        lem_settlement.set_prices_settlement(db_obj=self.db_conn_admin,
+                                             path_simulation=self.path_results,
+                                             list_ts_delivery=[self.t_now - self.t_now % 900])
+        # generate list of ts_delivery that are ready to be settled (i.e. (his means meter readings have been processed)
+        list_ts_delivery_ready = lem_settlement.get_list_ts_delivery_ready(db_obj=self.db_conn_admin)
+        # in some simulations, some plant have no physical meters. Their power flow must be implicitly calculated and
+        # assigned to a virtual meter.
+
+        # if ex-ante market selected, clear market
+        if self.config["lem"]["types_clearing_ex_ante"]:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                clearing_ex_ante.market_clearing_backup(db_obj=self.db_conn_admin,
                                                  config_lem=self.config["lem"],
                                                  t_override=self.t_now)
         # if ex-post markets are to be calculated, this is done here
@@ -964,6 +1347,80 @@ class ScenarioExecutor:
 
 
 # parallel functions need to be defined outside the class to work
+
+def _par_step_init(func, config, path_weather):
+    """
+    Initializes DatabaseConnection instances for par_step_prosumer_pre processes.
+
+    Database connections cannot be serialized, therefore a DatabaseConnection instance is attached to each process
+
+    param func: function to which the DatabaseConnection instance is to be attached
+
+    param config: dict, LEM config dict required to create a DatabaseConnection object
+
+    """
+    # initialize each multiprocessing worker with a database connection
+    func.db_conn = DatabaseConnection(db_dict=config["db_connections"]["database_connection_user"],
+                                      lem_config=config["lem"])
+    func.db_admin = DatabaseConnection(db_dict=config["db_connections"]["database_connection_admin"],
+                                       lem_config=config["lem"])
+
+    # add lem config to function
+    func.config_lem = config["lem"]
+    # each multiprocessing worker gets a copy of the weather file for the simulation,
+    # as every worker needs to regularly access the same read-only file
+
+    # df_weather = ft.read_dataframe(path_weather)
+    # df_weather = df_weather.astype({'ts_delivery_current': 'int', 'ts_delivery_fcast': 'int'})
+    # df_weather.set_index(["ts_delivery_current", "ts_delivery_fcast"], inplace=True)
+
+    t_first = pd.Timestamp(config["simulation"]["sim_start"],
+                           tz=config["simulation"]["sim_start_tz"]).timestamp() - 60
+    t_last = t_first + config["simulation"]["sim_length"] * 86400 + 86400
+    t_first_history = t_first - 100 * 86400
+
+    # # slice weather data into historical data for forecast algorithm training (100 days)
+    # # as well as perfect forecasting
+    # df_weather_history = df_weather.loc[(slice(t_first_history, t_last + 3 * 86400), slice(None))]
+    # df_weather_history = \
+    #     df_weather_history[df_weather_history.index.get_level_values(level=0)
+    #                        == df_weather_history.index.get_level_values(level=1)]
+    # # slice weather forecasts for required simulation period from full weather file
+    # df_weather_fcast = df_weather.loc[(slice(t_first - 900, t_last + 1), slice(None))]
+    #
+    # func.df_weather_history = df_weather_history
+    # func.df_weather_fcast = df_weather_fcast
+
+
+def _par_step(list_info):
+    """
+    Performs pre-clearing activities for all prosumers in the simulation.
+    New instances are instantiated and Prosumer.pre_clearing_activity() is
+    executed for each.
+
+    Used for non-real-time simulations only, as rea-time simulations are conducted using
+    scenario_executor.__step_prosumers_pre().
+
+    :param: None
+
+    :return: None
+    """
+    if "path_prosumer" in list_info.keys():
+        prosumer = Prosumer(path=list_info["path_prosumer"],
+                            t_override=list_info["t_now"],
+                            # df_weather_history=_par_step.df_weather_history,
+                            # df_weather_fcast=_par_step.df_weather_fcast
+                            )
+
+        prosumer.pre_clearing_activity(db_obj=_par_step.db_conn)
+    else:
+        positions_cleared = clearing_ex_ante.market_clearing_par(db_obj=_par_step.db_admin,
+                                             config_lem=_par_step.config_lem,
+                                             t_clear=list_info['t_clear'],
+                                             bids=list_info['bids'],
+                                             offers=list_info['offers'])
+
+        return positions_cleared
 
 def _par_step_prosumers_init(func, config, path_weather):
     """

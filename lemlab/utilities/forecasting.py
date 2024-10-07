@@ -14,6 +14,9 @@ import numpy as np
 import pandas as pd
 from bisect import bisect_left
 
+import pandas.errors
+from pprint import pprint
+
 # suppress tensorflow warnings because there are always some drivers for some graphics card missing.
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # or any {'0', '1', '2', '3'}
 
@@ -134,8 +137,8 @@ class ForecastManager:
                 if self.ts_delivery_current - last_update >= period_update:
                     if self.plant_dict[plant].get("type") in ["pv", "fixedgen"]:
                         # retrieve forecast for pv and fixed_gen plants, scale PU forecast by plant power
-                        df_temp = self.__update_single_forecast(id_plant=plant)
-                        df_temp["power"] *= self.plant_dict[plant].get("power")
+                        df_temp = self.__update_single_forecast(id_plant=plant).round().astype(int)
+                        # df_temp['power'] *= self.config_dict[plant]['power']  # not needed as not in pu anymore
                         # rename column and merge into forecast table
                         df_temp.rename(columns={'power': f'power_{plant}'}, inplace=True)
                         self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
@@ -166,6 +169,7 @@ class ForecastManager:
                     elif self.plant_dict[plant].get("type") == "hh":
                         # retrieve hh forecast and merge into forecast table
                         df_temp = self.__update_single_forecast(id_plant=plant)
+                        df_temp = round(df_temp, 0).astype(int)
                         df_temp.rename(columns={'power': f'power_{plant}'}, inplace=True)
                         self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
 
@@ -175,15 +179,32 @@ class ForecastManager:
                         self.fcast_table[f'power_{plant}'] = 0
                         self.fcast_table[f'soc_{plant}'] = 0
 
-                    elif self.plant_dict[plant].get("type") == "ev":
-                        # retrieve electric vehicle forecasts for availability AND distance driven
-                        df_temp = self.__update_single_forecast(id_plant=plant, column="availability")
-                        df_temp.rename(columns={'availability': f'availability_{plant}'}, inplace=True)
-                        self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
+                        # Make the columns integers
+                        self.fcast_table[f'power_{plant}'] = self.fcast_table[f'power_{plant}'].astype(int)
+                        self.fcast_table[f'soc_{plant}'] = self.fcast_table[f'soc_{plant}'].astype(int)
 
-                        df_temp = self.__update_single_forecast(id_plant=plant, column="distance_driven")
-                        df_temp.rename(columns={'distance_driven': f'distance_driven_{plant}'}, inplace=True)
-                        self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
+                    elif self.plant_dict[plant].get("type") == "ev":
+                        # retrieve electric vehicle forecasts for availability
+                        df_temp = self.__update_single_forecast(id_plant=plant, column="availability", ev=True)
+                        df_temp.rename(columns={'availability': f'availability_{plant}'}, inplace=True)
+                        num = 1
+                        while True:
+                            try:
+                                self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate" * num)
+                                break
+                            except pandas.errors.MergeError:
+                                num += 1
+
+                        # retrieve electric vehicle forecasts for demand_Wh
+                        df_temp = self.__update_single_forecast(id_plant=plant, column="demand_Wh", ev=True)
+                        df_temp.rename(columns={'demand_Wh': f'demand_Wh_{plant}'}, inplace=True)
+                        while True:
+                            try:
+                                self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate" * num)
+                                break
+                            except pandas.errors.MergeError:
+                                num += 1
+                        # self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate" * num)
                         # empty columns created for EV analogously to battery
                         self.fcast_table[f'power_{plant}'] = 0
                         self.fcast_table[f'soc_{plant}'] = 0
@@ -191,22 +212,26 @@ class ForecastManager:
 
                     elif self.plant_dict[plant].get("type") == "hp":
                         # retrieve heat pump temperature forecasts
-                        weather_fcast = "weather_perfect" if self.plant_dict[plant].get("fcast") == "perfect" else "weather_fcast"
-                        df_temp = self.__update_single_forecast(id_plant=plant,
-                                                                fcast=weather_fcast, column="temp")
-
-                        df_temp.rename(columns={'temp': f'temp_{plant}'}, inplace=True)
-                        self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
+                        # weather_fcast = "weather_perfect" if self.plant_dict[plant].get("fcast") == "perfect" else "weather_fcast"
+                        # df_temp = self.__update_single_forecast(id_plant=plant,
+                        #                                         fcast=weather_fcast, column="temp")
+                        #
+                        # df_temp.rename(columns={'temp': f'temp_{plant}'}, inplace=True)
+                        # self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
 
                         # retrieve heat load forecasts
                         df_temp = self.__update_single_forecast(id_plant=plant, column="heat")
                         df_temp.rename(columns={'heat': f'heat_{plant}'}, inplace=True)
                         self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
 
+                        # retrieve heat load forecasts
+                        df_temp = self.__update_single_forecast(id_plant=plant, column="cop")
+                        df_temp.rename(columns={'cop': f'cop_{plant}'}, inplace=True)
+                        self.fcast_table = self.fcast_table.join(df_temp, how="outer", lsuffix=f"duplicate")
+
                         # empty columns created for HP analogously to battery
                         self.fcast_table[f'power_{plant}'] = 0
                         self.fcast_table[f'soc_{plant}'] = 0
-                        self.fcast_table[f'cop_{plant}'] = 0
 
                     # if plant was updated, save this to the spec file
                     self.plant_dict[plant]["fcast_last_update"] = self.ts_delivery_current
@@ -216,8 +241,8 @@ class ForecastManager:
             # These forecasts are handled separately from those for plants
             # LEM prices are forecast either naively (same as yesterday)
             if self.config_dict["mpc_price_fcast"] == "naive":
-                last_update = self.config_dict.get("mpc_price_fcast_last_update", 0)
-                period_update = self.config_dict.get("mpc_price_fcast_update_period")
+                last_update = int(self.config_dict.get("mpc_price_fcast_last_update", 0))
+                period_update = int(self.config_dict.get("mpc_price_fcast_update_period"))
 
                 if self.ts_delivery_current - last_update >= period_update:
                     # return all predicted values in one list
@@ -267,7 +292,8 @@ class ForecastManager:
                                  fcast=None,
                                  fcast_horizon=None,
                                  filepath=None,
-                                 column="power"):
+                                 column="power",
+                                 ev=False):
         """
         Takes the forecast model "fcast" for plant "id_plant" and applies it to the data in "column" of "filepath" and returns a forecast
         starting at ts_delivery_current for "fcast_horizon" steps.
@@ -289,11 +315,15 @@ class ForecastManager:
             fcast_order = self.plant_dict[id_plant].get("fcast_order")
 
             if fcast_horizon is None:
-                fcast_horizon = self.config_dict["mpc_horizon"] + \
-                                self.plant_dict[id_plant].get("fcast_update_period", 900) // 900
+                # probably commented out part not needed as it just adds more steps but mpc_horizon IS already fcast_horizon
+                fcast_horizon = self.config_dict["mpc_horizon"] # + self.plant_dict[id_plant].get("fcast_update_period", 900) // 900
 
         if fcast is None:
             fcast = self.plant_dict[id_plant].get("fcast")
+
+        # Necessary for this simulation as somehow the forecast method is not included
+        if ev:
+            fcast = 'ev_close'
 
         if filepath is None:
             filepath = f"{self.path_prosumer}/raw_data_{id_plant}.ft"
@@ -401,19 +431,41 @@ class ForecastManager:
             return df_y_hat
 
         elif fcast == "naive_average":
-            # naive forecast, today will be the average of the previous 7 days
+            # naive forecast, today will be the average of the previous n days
             # read historical values and create time series to be utilities from
-            df_in = ft.read_dataframe(filepath)
-            df_in.set_index("timestamp", inplace=True)
-            y = list(df_in[(df_in.index <= self.ts_delivery_current - 900)][column])
-            y_hat = []
-            ts_pt = self.ts_delivery_current
-            for step in range(-fcast_horizon, 0, 1):
-                val = sum([y[step - i * 96] for i in range(7)])
-                y_hat.append([ts_pt, val / 7])
-                ts_pt += 900
 
-            df_y_hat = pd.DataFrame(y_hat, columns=("timestamp", column)).set_index("timestamp")
+            # Load file and set timestamp as index
+            df_in = pd.read_feather(filepath).set_index('timestamp')
+
+            # Set the number of days it should be averaged over
+            n_days = 2
+
+            # Reduce the size of the output dataframe and set values to 0
+            df_y_hat = df_in.loc[self.ts_delivery_current: self.ts_delivery_current + (fcast_horizon - 1) * 900, column]
+            df_y_hat[:] = 0
+
+            # Add values of the previous n days for each time step
+            for day in range(1, n_days + 1):
+                df_y_hat += df_in[column].shift(day * 96)
+
+            # Divide by the number of days to get the mean
+            df_y_hat /= n_days
+
+            # Convert to dataframe
+            df_y_hat = df_y_hat.to_frame()
+
+            # # OLD implementation (twice as fast but difficult to understand)
+            # df_in = ft.read_dataframe(filepath)
+            # df_in.set_index("timestamp", inplace=True)
+            # y = list(df_in[(df_in.index <= self.ts_delivery_current - 900)][column])
+            # y_hat = []
+            # ts_pt = self.ts_delivery_current
+            # for step in range(-fcast_horizon, 0, 1):
+            #     val = sum([y[step - i * 96] for i in range(2)])
+            #     y_hat.append([ts_pt, val / 2])
+            #     ts_pt += 900
+            #
+            # df_y_hat = pd.DataFrame(y_hat, columns=("timestamp", column)).set_index("timestamp")
 
             return df_y_hat
 
@@ -455,17 +507,28 @@ class ForecastManager:
 
         elif fcast == "ev_close":
             # "realistic" forecast for electric vehicles. As soon as the vehicle arrives, we know the SOC and for
-            # how long the vehicle will be available. Nothing is knows beyond the current charging cycle
-            df_in = ft.read_dataframe(filepath)
-            df_in.set_index("timestamp", inplace=True)
-            df_in = df_in[(self.ts_delivery_current <= df_in.index)
-                          & (df_in.index <= self.ts_delivery_current + 900 * fcast_horizon - 1)]
-            df_y_hat = df_in
-            state_vehicle = 1
-            for ix, row in df_in.iterrows():
-                if row["availability"] == 0:
-                    state_vehicle = 0
-                df_y_hat.loc[ix, column] = row[column] * state_vehicle
+            #  how long the vehicle will be available. Nothing is knows beyond the current charging cycle
+
+            # Read timeseries of plant
+            df_y_hat = ft.read_dataframe(filepath)
+            df_y_hat.set_index("timestamp", inplace=True)
+            # Read only from current time step until end of forecast horizon
+            df_y_hat = df_y_hat[(self.ts_delivery_current <= df_y_hat.index)
+                          & (df_y_hat.index <= self.ts_delivery_current + 900 * (fcast_horizon - 1))]
+
+            # Find the index of the first occurrence of 0 in the "availability" column
+            first_zero_index = np.argmax(df_y_hat['availability'].values == 0)
+
+            # If there is a 0 in the availability column set all subsequent rows of target column to 0
+            if first_zero_index > 0:
+                df_y_hat.loc[first_zero_index:, column] = 0
+
+            # OLD method of computing ev_close
+            # state_vehicle = 1
+            # for ix, row in df_in.iterrows():
+            #     if row["availability"] == 0:
+            #         state_vehicle = 0
+            #     df_y_hat.loc[ix, column] = row[column] * state_vehicle
             return df_y_hat
 
         elif fcast == "nn":

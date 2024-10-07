@@ -112,7 +112,7 @@ class ScenarioAnalyzer:
         self.plot_household()                       # plots the power profile of one household as example
         self.plot_average_mcp_per_type()            # plots the weighted costs per energy for each household type
 
-    def plot_virtual_feeder_flow(self) -> None:
+    def plot_virtual_feeder_flow(self, limits: list = None) -> None:
         """plots the flow within the market over time
 
         Args:
@@ -133,11 +133,23 @@ class ScenarioAnalyzer:
         df_meter_readings_delta = pd.read_csv(f"{self.path_results}/db_snapshot/"
                                               f"{db_p.NAME_TABLE_READINGS_METER_DELTA}.csv", index_col=0)
 
+
         df_results = df_meter_readings_delta[df_meter_readings_delta[db_p.ID_METER].isin(list_main_meters)]
-        df_results = df_results.groupby(db_p.TS_DELIVERY).sum() * self.conv_to_kW
-        df_results.columns = ["negative_flow_kW", "positive_flow_kW"]
+
+
+        if limits:
+            df_results = df_results[(limits[0] <= df_results[db_p.TS_DELIVERY])
+                                    & (df_results[db_p.TS_DELIVERY] < limits[1])]
+
+        df_results = df_results.groupby(db_p.TS_DELIVERY).sum()
+        df_results['energy_in'] = df_results['energy_in'].astype(
+            'int64') * 1 / 250  # to convert from Wh per 15 min to kW
+        df_results['energy_out'] = df_results['energy_out'].astype(
+            'int64') * 1 / 250  # to convert from Wh per 15 min to kW
+        df_results.rename(columns={'energy_in': "negative_flow_kW", 'energy_out': "positive_flow_kW"}, inplace=True)
         df_results["negative_flow_kW"] = - df_results["negative_flow_kW"]
         df_results["net_flow_kW"] = df_results["positive_flow_kW"] + df_results["negative_flow_kW"]
+        # df_results.drop(columns=['id_meter'], inplace=True)
         cols = df_results.columns.tolist()
         cols = cols[1:] + [cols[0]]
         df_results = df_results[cols]
@@ -160,13 +172,100 @@ class ScenarioAnalyzer:
         # Figure setup
         xlims = [min(xvalues), max(xvalues)]
         scplotter.figure_setup(title="Virtual microgrid power flow summary", ylabel="Power (kW)",
-                               legend_labels=("Positive flow", "Net flow", "Negative flow"),
-                               xlims=xlims, xticks_style="date")
+                               legend_labels=labels, xlims=xlims, xticks_style="date")
         if self.save_figures:
             self.__save_figure(name="virtual_feeder_flow")
         if self.show_figures:
             plt.show()
 
+    def plot_detailed_virtual_feeder_flow(self, limits: list = None, name: str = "power_detailed") -> None:
+
+        # Load meter information
+        df_meters = pd.read_csv(f"{self.path_results}/db_snapshot/{db_p.NAME_TABLE_INFO_METER}.csv", index_col=0, dtype={"id_user": str})
+
+        # Group by meter type
+        meter_types = df_meters[db_p.INFO_ADDITIONAL].unique()
+        df_meters = df_meters.groupby(db_p.INFO_ADDITIONAL)
+
+        # Get meter readings
+        df_meter_readings = pd.read_csv(f"{self.path_results}/db_snapshot/{db_p.NAME_TABLE_READINGS_METER_DELTA}.csv",
+                                        index_col=0)
+
+        # Limit the meter readings to the specified limits if available
+        if limits:
+            df_meter_readings = df_meter_readings[(limits[0] <= df_meter_readings['ts_delivery'])
+                                                  & (df_meter_readings['ts_delivery'] < limits[1])]
+
+        # Create new df for the results with the timestamp as index
+        df_results = pd.DataFrame(index=df_meter_readings[db_p.TS_DELIVERY].unique())
+
+        # Loop through the different meter types
+        for meter_type, df_meter_type in df_meters:
+            # Skip the main meter as it is not of interest
+            if meter_type == "main meter":
+                continue
+
+            # Get all meter IDs of the current meter type
+            list_meter_ids = set(df_meter_type[db_p.ID_METER])
+
+            # Get the meter readings of the current meter type
+            df_meter_readings_type = df_meter_readings[df_meter_readings[db_p.ID_METER].isin(list_meter_ids)]
+
+            # Group by timestamp
+            df_meter_readings_type = df_meter_readings_type.groupby(db_p.TS_DELIVERY).sum()
+
+            # Calculate net energy flow
+            df_meter_readings_type['energy'] = df_meter_readings_type['energy_out'] - df_meter_readings_type['energy_in']
+
+            # Add the energy flows to the results df
+            # df_results[f'{meter_type}_in'] = df_meter_readings_type['energy_in']
+            # df_results[f'{meter_type}_out'] = df_meter_readings_type['energy_out']
+            df_results[meter_type] = df_meter_readings_type['energy']
+
+        # Convert all values from Wh per 15 min to kW
+        df_results *= 1 / 250
+
+        # Separate into positive and negative values
+        df_pos = df_results.clip(lower=0)
+        df_neg = df_results.clip(upper=0)
+
+        # Calculate the net energy flow of the main meter (all columns that do not end on in or out)
+        # df_results['main'] = df_results[[col for col in df_results.columns if not col.endswith('in')
+        #                                     and not col.endswith('out')]].sum(axis=1)
+        df_results['main'] = df_results.sum(axis=1)
+        print(df_results.sum().round().astype(int))
+
+        # Define labels and colors
+        labels = ["Main meter", "Battery", "EV", "Household", "Heat pump", "PV"]
+        colors = ["0.2", "#ec6a0e", "#2791be", "#a8d277", "#c33528", "#ffd045"]
+
+        # labels_opt = ["PV", "Battery", "EV", "Heat pump", "Wind", "Fixed gen"]  # according labels for the devices
+        # colors_opt = ["#ffd045", "#ec6a0e", "#2791be", "#c33528", "#28a9c3", "0.7"]  # according colors for the devices
+
+        # Plots
+        scplotter = ScenarioPlotter()
+        xvalues = df_results.index.values
+        # Line plot of main meter
+        yvalues = df_results['main'].transpose().values.tolist()
+        scplotter.ax.plot(xvalues, yvalues, color=colors[0])
+        # Textbox with peak power
+        peak_power = int(round(max([abs(val) for val in yvalues])))
+        scplotter.ax.text(0.05, 0.9, f'Abs. peak power: {peak_power} kW', transform=scplotter.ax.transAxes,
+                          fontsize=12, bbox=dict(facecolor='white', alpha=0.5))
+        # Stackplot of submeters (positive values)
+        yvalues = df_pos.transpose().values.tolist()
+        scplotter.ax.stackplot(xvalues, yvalues, baseline="zero", colors=colors[1:])
+        # Stackplot of submeters (negative values)
+        yvalues = df_neg.transpose().values.tolist()
+        scplotter.ax.stackplot(xvalues, yvalues, baseline="zero", colors=colors[1:])
+        # Figure setup
+        xlims = [min(xvalues), max(xvalues)]
+        scplotter.figure_setup(title=f"Detailed powerflow", ylabel="Power (kW)",
+                               legend_labels=labels, xlims=xlims, xticks_style="date")
+        if self.save_figures:
+            self.__save_figure(name=name)
+        if self.show_figures:
+            plt.show()
 
     def determine_autarky(self) -> None:
         """This function calculates the degree of energy independency of the simulated LEM"""
@@ -370,7 +469,8 @@ class ScenarioAnalyzer:
         else:
             raise NameError
 
-    def plot_household(self, type_household: tuple = (1, 1, 0, 1, 0, 0), id_user: int = None) -> None:
+    def plot_household(self, type_household: tuple = (1, 1, 0, 1, 0, 0), id_user: int = None, limits: list = None) \
+            -> None:
         """gathers information about the chosen example household and calls the subfunctions to plot the power profile
         and the power purchases and sales over time
 
@@ -382,6 +482,10 @@ class ScenarioAnalyzer:
 
         Returns:
             None
+
+        Note: The function can only plot one device per type. If there are multiple devices of the same type, the main
+        meter is still showing the corrent net power flow but the colored areas are incorrect as only the first device
+        per type is shown.
 
         """
 
@@ -487,8 +591,8 @@ class ScenarioAnalyzer:
         # Plot household power profile and financial balance
         id_users = df_users.index.values
         id_user = df_users[df_users["main_id"] == id_meter].index.values[0]
-        self.__plot_household_power(id_user, id_meter, ids, devices, labels, colors)
-        self.__plot_household_finance(id_users, id_user, complete_table=False)
+        self.__plot_household_power(id_user, id_meter, ids, devices, labels, colors, limits)
+        # self.__plot_household_finance(id_users, id_user, complete_table=False)
 
     def plot_average_mcp_per_type(self, all_types: bool = False) -> None:
         """This function plots the specific energy purchasing costs and average total energy purchased
@@ -640,8 +744,8 @@ class ScenarioAnalyzer:
         scplotter.grid_b_minor = True
         scplotter.figure_setup(ylabel_right="Price (c/kWh)",
                                ylabel="Energy (kWh)")
-        scplotter.ax2.set_ylim([0, 10])
-        scplotter.ax.set_ylim([0, 40])
+        #scplotter.ax2.set_ylim([0, 10])
+        #scplotter.ax.set_ylim([0, 40])
         # scplotter.ax2.legend(["", "box"])
         # scplotter.ax.legend(["bar"])
 
@@ -793,7 +897,7 @@ class ScenarioAnalyzer:
         if self.show_figures:
             plt.show()
 
-    def __plot_household_power(self, id_user, id_meter, ids, devices, labels, colors) -> None:
+    def __plot_household_power(self, id_user, id_meter, ids, devices, labels, colors, limits: list = None) -> None:
         """plots the power profile of the example household over time
 
         Args:
@@ -825,13 +929,16 @@ class ScenarioAnalyzer:
                 print(ne)
         df_user = df_user.sort_index()
 
+        if limits:
+            df_user = df_user.loc[(df_user.index >= limits[0]) & (df_user.index <= limits[1])]
+
         # Plots
         scplotter = ScenarioPlotter()
         xvalues = df_user.index.values
         df_pos, df_neg = df_user.iloc[:, 4:].clip(lower=0), df_user.iloc[:, 4:].clip(upper=0)
         # Line plot of main meter
         yvalues = df_user.iloc[:, 3].transpose().values.tolist()
-        scplotter.ax.plot(xvalues, yvalues, linewidth=3, color=colors[0])
+        scplotter.ax.plot(xvalues, yvalues, color=colors[0], alpha=0)
         # Stackplot of submeters (positive values)
         yvalues = df_pos.transpose().values.tolist()
         scplotter.ax.stackplot(xvalues, yvalues, baseline="zero", colors=colors[1:])
@@ -1077,8 +1184,11 @@ class ScenarioAnalyzer:
         devices = ("pv", "bat", "ev", "hp", "wind", "fixedgen")
 
         for device in devices:
-            df_temp[device] = df_meters[(df_meters[db_p.INFO_ADDITIONAL] == device)]. \
-                              set_index(db_p.ID_USER)[db_p.INFO_ADDITIONAL]
+            try:
+                df_temp[device] = df_meters[(df_meters[db_p.INFO_ADDITIONAL] == device)]. \
+                                  set_index(db_p.ID_USER)[db_p.INFO_ADDITIONAL]
+            except ValueError:
+                df_temp[device] = 1
 
         # Post-process data to create tuples of (x, x, x, x, x, x) x ∈ [0, 1] and return information
         df_temp = df_temp.fillna(0)
@@ -1139,7 +1249,6 @@ class ScenarioAnalyzer:
             None
 
         """
-
         # Save file to analyzer directory. If file with the name already exists, replace it with the new file
         if os.path.isfile(f"{self.path_analyzer}/{name}.png"):
             os.remove(f"{self.path_analyzer}/{name}.png")
@@ -1269,7 +1378,7 @@ class ScenarioPlotter:
             self.ax2.set_xlabel(xlabel=xlabel)
             self.ax2.tick_params(axis='both', which='major')
             self.ax2.autoscale(enable=True, axis='x', tight=True)
-            self.ax.grid(b=False)
+            # self.ax.grid(b=False)
 
         plt.tight_layout()
 

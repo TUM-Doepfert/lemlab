@@ -31,6 +31,24 @@ University of Munich](https://www.tum.de/en/). Version 1.0 (May 2021) was develo
 Regional Development and Energy. The code base will be upgraded and extended as part of the joint StroM project in 
 cooperation with the [Munich School of Engineering](https://www.mse.tum.de/en/home/).
 
+## Important information on how to use this branch
+
+This branch contains the code used for the publication "Assessing the techno-economic benefits of LEMs for different 
+grid topologies and prosumer shares". The code is based on the original lemlab code base and has been adapted to
+simulate the scenarios described in the paper. The scenarios and the results can be found under this 
+[Zenodo link](https://doi.org/10.5281/zenodo.13623929). The full scenarios including results are found in their 
+individual folders. To analyze them put them in the simulation_results folder and run the sim_4_plot_results.py script. 
+If you want to run the scenarios yourself, place the scenarios in the scenarios folder and run the sim_3_run.py script.
+Additionally, a file containing only the relevant files for the publication can be found under the name 
+"results_compact.rar" in the Zenodo link. It mainly contains only the db_snapshot folder which contains the results of
+the given scenario.
+
+Furthermore, this branch contains a folder called "max_loads_15", which contains all the relevant analysis files that 
+were used to create the results in the paper. The files can be used to dig deeper into the results. All the files were
+created using the analyze_results.py script. The script also contains the code to create the figures of the paper.
+
+The other scripts can be ignored as they were mostly used to prepare the scenarios.
+
 ## Features
 lemlab offers...
 * a fully open-source, agent-based local energy market modelling toolbox
