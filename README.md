@@ -1,6 +1,8 @@
 lemlab
 =======
 
+[![DOI](https://zenodo.org/badge/371720273.svg)](https://doi.org/10.5281/zenodo.13908971)
+
 ![lemlab](./docs/images/lemlab_logo.png)
 
 An open-source tool for the agent-based development and testing of local energy market applications.
